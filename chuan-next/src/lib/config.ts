@@ -33,12 +33,12 @@ const getCurrentWsUrl = () => {
     
     if (isNextDevServer) {
       // 开发模式：通过 Next.js 开发服务器访问，连接到后端 WebSocket
-      return 'ws://localhost:8080/ws/p2p';
+      return 'ws://localhost:8080';
     }
     
     // 生产模式或通过 Go 服务器访问：使用当前域名和端口
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/ws/p2p`;
+    return `${protocol}//${window.location.host}`;
   }
   // 服务器端返回空字符串，强制在客户端计算
   return '';

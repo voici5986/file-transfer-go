@@ -239,7 +239,7 @@ export function useSharedWebRTCManager(): WebRTCConnection {
       }
       
       // 构建完整的WebSocket URL
-      const wsUrl = baseWsUrl.replace('/ws/p2p', `/ws/webrtc?code=${roomCode}&role=${role}&channel=shared`);
+      const wsUrl = `${baseWsUrl}/api/ws/webrtc?code=${roomCode}&role=${role}&channel=shared`;
       console.log('[SharedWebRTC] 🌐 连接WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;

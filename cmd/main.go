@@ -58,6 +58,7 @@ func main() {
 	r.Handle("/*", web.CreateFrontendHandler())
 
 	// WebRTC信令WebSocket路由
+	r.Get("/api/ws/webrtc", h.HandleWebRTCWebSocket)
 	r.Get("/ws/webrtc", h.HandleWebRTCWebSocket)
 
 	// WebRTC房间API

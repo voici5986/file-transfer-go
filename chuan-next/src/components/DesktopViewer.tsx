@@ -144,7 +144,33 @@ export default function DesktopViewer({
         // 全屏时自动隐藏控制栏，鼠标移动时显示
         setShowControls(false);
       } else {
+        // 退出全屏时显示控制栏
         setShowControls(true);
+        
+        // 延迟检查视频状态，确保全屏切换完成
+        setTimeout(() => {
+          if (videoRef.current && stream) {
+            console.log('[DesktopViewer] 🔄 退出全屏，检查视频状态');
+            
+            // 确保视频流正确设置
+            const currentSrcObject = videoRef.current.srcObject;
+            if (!currentSrcObject || currentSrcObject !== stream) {
+              videoRef.current.srcObject = stream;
+            }
+            
+            // 检查视频是否暂停
+            if (videoRef.current.paused) {
+              console.log('[DesktopViewer] ⏸️ 退出全屏后视频已暂停，显示播放按钮');
+              setIsPlaying(false);
+              setNeedsUserInteraction(true);
+              hasAttemptedAutoplayRef.current = true; // 标记已尝试过自动播放
+            } else {
+              console.log('[DesktopViewer] ▶️ 退出全屏后视频仍在播放');
+              setIsPlaying(true);
+              setNeedsUserInteraction(false);
+            }
+          }
+        }, 200); // 延迟200ms确保全屏切换完成
       }
     };
 
@@ -153,7 +179,7 @@ export default function DesktopViewer({
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, []);
+  }, [stream]);
 
   // 鼠标移动处理（全屏时）
   const handleMouseMove = useCallback(() => {
@@ -207,13 +233,43 @@ export default function DesktopViewer({
 
   // 切换全屏
   const toggleFullscreen = useCallback(async () => {
-    if (!containerRef.current) return;
+    if (!videoRef.current) return;
 
     try {
       if (isFullscreen) {
-        await document.exitFullscreen();
+        // 退出全屏
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        }
+        // 退出iOS全屏模式
+        if ((document as any).webkitExitFullscreen) {
+          await (document as any).webkitExitFullscreen();
+        }
+        // 退出视频全屏模式
+        if ((videoRef.current as any).webkitExitFullscreen) {
+          await (videoRef.current as any).webkitExitFullscreen();
+        }
+        // 退出Android全屏模式
+        if ((videoRef.current as any).exitFullscreen) {
+          await (videoRef.current as any).exitFullscreen();
+        }
       } else {
-        await containerRef.current.requestFullscreen();
+        // 进入标准全屏
+        if (videoRef.current.requestFullscreen) {
+          await videoRef.current.requestFullscreen();
+        }
+        // 进入iOS全屏模式
+        else if ((videoRef.current as any).webkitRequestFullscreen) {
+          await (videoRef.current as any).webkitRequestFullscreen();
+        }
+        // 进入iOS视频全屏模式
+        else if ((videoRef.current as any).webkitEnterFullscreen) {
+          await (videoRef.current as any).webkitEnterFullscreen();
+        }
+        // 进入Android全屏模式
+        else if ((videoRef.current as any).requestFullscreen) {
+          await (videoRef.current as any).requestFullscreen();
+        }
       }
     } catch (error) {
       console.error('[DesktopViewer] 全屏切换失败:', error);
@@ -223,8 +279,21 @@ export default function DesktopViewer({
   // 退出全屏
   const exitFullscreen = useCallback(async () => {
     try {
+      // 退出标准全屏
       if (document.fullscreenElement) {
         await document.exitFullscreen();
+      }
+      // 退出iOS全屏模式
+      if ((document as any).webkitExitFullscreen) {
+        await (document as any).webkitExitFullscreen();
+      }
+      // 退出视频全屏模式
+      if (videoRef.current && (videoRef.current as any).webkitExitFullscreen) {
+        await (videoRef.current as any).webkitExitFullscreen();
+      }
+      // 退出Android全屏模式
+      if (videoRef.current && (videoRef.current as any).exitFullscreen) {
+        await (videoRef.current as any).exitFullscreen();
       }
     } catch (error) {
       console.error('[DesktopViewer] 退出全屏失败:', error);
@@ -301,15 +370,15 @@ export default function DesktopViewer({
         }}
       />
 
-      {/* 需要用户交互的播放覆盖层 - 只在自动播放尝试失败后显示 */}
-      {hasAttemptedAutoplayRef.current && needsUserInteraction && !isPlaying && (
+      {/* 需要用户交互的播放覆盖层 - 在视频暂停时显示 */}
+      {((needsUserInteraction && !isPlaying) || (isConnected && !isPlaying && !needsUserInteraction && videoRef.current?.paused)) && (
         <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center text-white z-10">
           <div className="text-center">
             <div className="w-20 h-20 mx-auto mb-4 bg-white/20 rounded-full flex items-center justify-center hover:bg-white/30 transition-colors cursor-pointer" onClick={handleManualPlay}>
               <Play className="w-10 h-10 text-white ml-1" />
             </div>
             <h3 className="text-lg font-semibold mb-2">点击播放桌面共享</h3>
-            <p className="text-sm opacity-75">浏览器需要用户交互才能开始播放媒体</p>
+            <p className="text-sm opacity-75">视频已暂停，点击继续播放</p>
           </div>
         </div>
       )}
@@ -331,23 +400,23 @@ export default function DesktopViewer({
           showControls || !isFullscreen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           {/* 左侧信息 */}
           <div className="flex items-center space-x-4 text-white text-sm">
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${isPlaying ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
-              <span>{isPlaying ? '桌面共享中' : needsUserInteraction ? '等待播放' : '连接中'}</span>
+              <span className="text-xs sm:text-sm">{isPlaying ? '桌面共享中' : needsUserInteraction ? '等待播放' : isConnected ? '已暂停' : '连接中'}</span>
             </div>
             {videoStats.resolution !== '0x0' && (
               <>
-                <div className="w-px h-4 bg-white/30"></div>
-                <span>{videoStats.resolution}</span>
+                <div className="w-px h-4 bg-white/30 hidden sm:block"></div>
+                <span className="text-xs sm:text-sm hidden sm:block">{videoStats.resolution}</span>
               </>
             )}
             {connectionCode && (
               <>
-                <div className="w-px h-4 bg-white/30"></div>
-                <span className="font-mono">{connectionCode}</span>
+                <div className="w-px h-4 bg-white/30 hidden sm:block"></div>
+                <span className="font-mono text-xs sm:text-sm hidden sm:block">{connectionCode}</span>
               </>
             )}
           </div>
@@ -372,7 +441,7 @@ export default function DesktopViewer({
             <Button
               variant="ghost"
               size="sm"
-              className="text-white hover:bg-white/20"
+              className="text-white hover:bg-white/20 hidden sm:flex"
             >
               <Settings className="w-4 h-4" />
             </Button>
@@ -412,6 +481,19 @@ export default function DesktopViewer({
           </div>
         )}
       </div>
+
+      {/* 移动端浮动全屏按钮 - 在控制栏隐藏时显示 */}
+      {!isFullscreen && (
+        <Button
+          variant="ghost"
+          size="lg"
+          onClick={toggleFullscreen}
+          className="fixed bottom-20 right-4 z-40 md:hidden bg-black/60 text-white hover:bg-black/80 rounded-full p-3 shadow-lg"
+          title="全屏"
+        >
+          <Maximize className="w-5 h-5" />
+        </Button>
+      )}
 
       {/* 加载状态 */}
       {stream && !isConnected && (

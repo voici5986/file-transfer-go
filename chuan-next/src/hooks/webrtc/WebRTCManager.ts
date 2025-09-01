@@ -318,7 +318,7 @@ export class WebRTCManager extends EventEmitter {
         throw new WebRTCError('WS_URL_NOT_CONFIGURED', 'WebSocket URL未配置', false);
       }
 
-      const wsUrl = baseWsUrl.replace('/ws/p2p', `/ws/webrtc?code=${roomCode}&role=${role}&channel=shared`);
+      const wsUrl = baseWsUrl.replace('/api/ws/webrtc', `/ws/webrtc?code=${roomCode}&role=${role}&channel=shared`);
       this.wsManager = new WebSocketManager({
         url: wsUrl,
         reconnectAttempts: 5,
