@@ -1,0 +1,72 @@
+name: ✨ 功能请求
+description: 建议一个新功能或改进
+title: "[Feature] "
+labels: ["enhancement", "功能请求"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢您提出功能建议！您的想法对改进项目非常重要。请详细描述您的建议。
+
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: 建议功能
+      description: 请清楚简洁地描述您希望实现的功能
+      placeholder: |
+        例如：希望添加文件加密传输功能，在传输过程中对文件进行端到端加密...
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 需求原因
+      description: 请解释为什么需要这个功能，它解决了什么问题？
+      placeholder: |
+        例如：
+        - 当前在传输敏感文件时缺乏安全保障
+        - 在公网环境下传输文件可能被第三方截获
+        - 企业用户需要确保数据传输的安全性
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: 使用场景
+      description: 请描述这个功能的具体使用场景和出发点
+      placeholder: |
+        例如：
+        - 医疗机构传输患者档案时需要加密保护
+        - 企业内部传输财务报表等敏感文档
+        - 个人用户传输私人照片和视频时希望保护隐私
+        - 在不受信任的网络环境下进行文件传输
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 优先级
+      description: 您认为这个功能的优先级如何？
+      options:
+        - 低（Nice to have）
+        - 中（重要但不紧急）
+        - 高（对用户体验很重要）
+        - 关键（阻碍正常使用）
+    validations:
+      required: true
+
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 其他信息
+      description: 任何其他可能有助于理解和实现这个功能的信息
+      placeholder: |
+        - 类似功能的参考应用或网站
+        - 相关技术文档或标准
+        - 社区讨论链接
+        - 其他补充说明
+

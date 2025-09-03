@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📚 项目文档
+    url: https://github.com/MatrixSeven/file-transfer-go/blob/main/README.md
+    about: 查看项目使用文档和部署指南
+  - name: 💬 讨论区
+    url: https://github.com/MatrixSeven/file-transfer-go/discussions
+    about: 参与社区讨论，分享使用经验和想法
+  - name: 🌐 官方演示
+    url: https://transfer.52python.cn/
+    about: 访问官方演示站点体验功能（如果可用）
