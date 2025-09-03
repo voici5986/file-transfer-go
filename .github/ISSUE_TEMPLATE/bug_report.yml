@@ -61,24 +61,6 @@ body:
       required: true
 
   - type: textarea
-    id: expected-behavior
-    attributes:
-      label: 预期行为
-      description: 您期望发生什么？
-      placeholder: 文件应该能够正常传输完成
-    validations:
-      required: true
-
-  - type: textarea
-    id: actual-behavior
-    attributes:
-      label: 实际行为
-      description: 实际发生了什么？
-      placeholder: 传输进度到50%时连接突然断开，显示"连接失败"错误
-    validations:
-      required: true
-
-  - type: textarea
     id: logs
     attributes:
       label: 相关日志
@@ -111,16 +93,3 @@ body:
         - 是否在多个设备上都出现
         - 最近是否有环境变化
         - 其他可能相关的信息...
-
-  - type: checkboxes
-    id: terms
-    attributes:
-      label: 确认事项
-      description: 在提交前，请确认以下事项
-      options:
-        - label: 我已经搜索了现有的 Issues，确认这不是重复问题
-          required: true
-        - label: 我已经提供了足够的信息来复现和诊断问题
-          required: true
-        - label: 我理解维护者可能需要更多信息来解决问题
-          required: true
