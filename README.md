@@ -3,7 +3,7 @@
 
 **安全、快速、简单的点对点文件传输解决方案 - 无需注册，即传即用**
 
-## [在线体验](https://transfer.52python.cn) • [GitHub](https://github.com/MatrixSeven/file-transfer-go) • [X关注我](https://x.com/_MatrixSeven)
+## [在线体验](https://transfer.52python.cn) •  [关注我](https://x.com/_MatrixSeven) • [帮助文档](https://transfer.52python.cn/help)
 
 ![项目演示](img.png)
 
@@ -31,7 +31,13 @@
 
 ## 🔄 最近更新日志
 
-### 2025-09--1
+### 2025-09-5
+- ✅ **WEBRTC链接恢复** - 关闭页面后在打开，进行数据链接恢复
+- ✅ **定义TURN配置** -  支持自定义中继TURN配置
+- ✅ **优化移动端提示** -  优化各种场景的错误提示
+- ✅ **帮助文档** -  常见问题说明文档更新
+
+### 2025-09-1
 - ✅ **移动端桌面全屏** - 优化移动端下UI，并解决全屏问题
 
 ### 2025-08-28

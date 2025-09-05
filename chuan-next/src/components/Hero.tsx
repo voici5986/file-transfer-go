@@ -1,7 +1,8 @@
 "use client";
 
 import React from 'react';
-import { Github } from 'lucide-react';
+import { Github, HelpCircle } from 'lucide-react';
+import Link from 'next/link';
 
 export default function Hero() {
   return (
@@ -15,7 +16,7 @@ export default function Hero() {
         <span className="text-xs sm:text-sm text-slate-500">基于WebRTC的端到端服务 - 无需注册，即传即用</span>
       </p>
       
-      {/* GitHub开源链接 */}
+      {/* GitHub开源链接和帮助 */}
       <div className="flex items-center justify-center gap-2 mb-4">
         <a 
           href="https://github.com/MatrixSeven/file-transfer-go" 
@@ -26,7 +27,17 @@ export default function Hero() {
           <Github className="w-3 h-3 sm:w-4 sm:h-4" />
           <span className="font-medium">开源项目</span>
         </a>
-        <span className="text-xs text-slate-400">|</span>
+        
+        <Link 
+          href="/help"
+          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs sm:text-sm text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-full transition-colors duration-200 border border-blue-200 hover:border-blue-300"
+        >
+          <HelpCircle className="w-3 h-3 sm:w-4 sm:h-4" />
+          <span className="font-medium">使用帮助</span>
+        </Link>
+      </div>
+      
+      <div className="flex items-center justify-center">
         <a 
           href="https://github.com/MatrixSeven/file-transfer-go"
           target="_blank" 

@@ -27,6 +27,25 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
     }
   }, [onConnectionChange, desktopShare.isWebSocketConnected, desktopShare.isPeerConnected, desktopShare.isConnecting]);
 
+  // 监听连接状态变化，当P2P连接断开时重置共享状态
+  useEffect(() => {
+    // 如果正在共享但P2P连接断开，自动重置共享状态
+    if (desktopShare.isSharing && !desktopShare.isPeerConnected && desktopShare.connectionCode) {
+      console.log('[DesktopShareSender] 检测到P2P连接断开，自动重置共享状态');
+      
+      const resetState = async () => {
+        try {
+          await desktopShare.resetSharing();
+          console.log('[DesktopShareSender] 已自动重置共享状态');
+        } catch (error) {
+          console.error('[DesktopShareSender] 自动重置共享状态失败:', error);
+        }
+      };
+      
+      resetState();
+    }
+  }, [desktopShare.isSharing, desktopShare.isPeerConnected, desktopShare.connectionCode, desktopShare.resetSharing]);
+
   // 复制房间代码
   const copyCode = useCallback(async (code: string) => {
     try {
@@ -71,6 +90,14 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
       console.error('[DesktopShareSender] 开始桌面共享失败:', error);
       const errorMessage = error instanceof Error ? error.message : '开始桌面共享失败';
       showToast(errorMessage, 'error');
+      
+      // 分享失败时重置状态，让用户重新选择桌面
+      try {
+        await desktopShare.resetSharing();
+        console.log('[DesktopShareSender] 已重置共享状态，用户可以重新选择桌面');
+      } catch (resetError) {
+        console.error('[DesktopShareSender] 重置共享状态失败:', resetError);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -90,6 +117,14 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
       console.error('[DesktopShareSender] 切换桌面失败:', error);
       const errorMessage = error instanceof Error ? error.message : '切换桌面失败';
       showToast(errorMessage, 'error');
+      
+      // 切换桌面失败时重置状态，让用户重新选择桌面
+      try {
+        await desktopShare.resetSharing();
+        console.log('[DesktopShareSender] 已重置共享状态，用户可以重新选择桌面');
+      } catch (resetError) {
+        console.error('[DesktopShareSender] 重置共享状态失败:', resetError);
+      }
     } finally {
       setIsLoading(false);
     }

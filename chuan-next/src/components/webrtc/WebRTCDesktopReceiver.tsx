@@ -73,6 +73,12 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
         return;
       }
       
+      // 检查房间是否已满
+      if (result.is_room_full) {
+        showToast('当前房间人数已满，正在传输中无法加入，请稍后再试', "error");
+        return;
+      }
+      
       // 检查发送方是否在线
       if (!result.sender_online) {
         showToast('发送方不在线，请确认房间代码是否正确或联系发送方', "error");
@@ -172,6 +178,12 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
             return;
           }
           
+          // 检查房间是否已满
+          if (result.is_room_full) {
+            showToast('当前房间人数已满，正在传输中无法加入，请稍后再试', "error");
+            return;
+          }
+          
           // 检查发送方是否在线
           if (!result.sender_online) {
             showToast('发送方不在线，请确认房间代码是否正确或联系发送方', "error");
@@ -221,6 +233,7 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
     autoJoin();
   }, [initialCode, desktopShare.isViewing, desktopShare.isConnecting, isJoiningRoom]); // 添加isJoiningRoom依赖
 
+  
   return (
     <div className={`space-y-4 sm:space-y-6 ${className || ''}`}>
       <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 sm:p-6 shadow-lg border border-white/20 animate-fade-in-up">
@@ -328,8 +341,8 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
 
               {/* 桌面显示区域 */}
               {desktopShare.remoteStream ? (
-                <DesktopViewer 
-                  stream={desktopShare.remoteStream} 
+                <DesktopViewer
+                  stream={desktopShare.remoteStream}
                   isConnected={desktopShare.isViewing}
                   connectionCode={inputCode}
                   onDisconnect={handleStopViewing}
@@ -344,7 +357,7 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
                     <div className="flex items-center justify-center space-x-2 mt-4">
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-500"></div>
                       <span className="text-sm text-purple-600">等待桌面流...</span>
-                    </div>
+                    </div>                                     
                   </div>
                 </div>
               )}

@@ -23,7 +23,6 @@ type WebRTCRoom struct {
 	Receiver  *WebRTCClient
 	CreatedAt time.Time
 	ExpiresAt time.Time      // 添加过期时间
-	LastOffer *WebRTCMessage // 保存最后的offer消息
 }
 
 type WebRTCClient struct {
@@ -103,6 +102,20 @@ func (ws *WebRTCService) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 		conn.WriteJSON(map[string]interface{}{
 			"type":    "error",
 			"message": "房间已过期",
+		})
+		return
+	}
+
+	// 检查房间是否已满（两个连接都已存在）
+	ws.roomsMux.RLock()
+	isRoomFull := room.Sender != nil && room.Receiver != nil
+	ws.roomsMux.RUnlock()
+
+	if isRoomFull {
+		log.Printf("房间已满，拒绝连接: %s", code)
+		conn.WriteJSON(map[string]interface{}{
+			"type":    "error",
+			"message": "当前房间人数已满，正在传输中无法加入",
 		})
 		return
 	}
@@ -187,15 +200,6 @@ func (ws *WebRTCService) addClientToRoom(code string, client *WebRTCClient) {
 			}
 			room.Sender.Connection.WriteJSON(peerJoinedMsg)
 		}
-
-		// 如果接收方连接，且有保存的offer，立即发送给接收方
-		if room.LastOffer != nil {
-			log.Printf("向新连接的接收方发送保存的offer")
-			err := client.Connection.WriteJSON(room.LastOffer)
-			if err != nil {
-				log.Printf("发送保存的offer失败: %v", err)
-			}
-		}
 	}
 }
 
@@ -231,12 +235,6 @@ func (ws *WebRTCService) forwardMessage(roomCode string, fromClientID string, ms
 	room := ws.rooms[roomCode]
 	if room == nil {
 		return
-	}
-
-	// 如果是offer消息，保存起来
-	if msg.Type == "offer" {
-		room.LastOffer = msg
-		log.Printf("保存offer消息，等待接收方连接")
 	}
 
 	var targetClient *WebRTCClient
@@ -374,6 +372,7 @@ func (ws *WebRTCService) notifyRoomDisconnection(roomCode string, disconnectedCl
 		}
 	}
 }
+
 func (ws *WebRTCService) GetRoomStatus(code string) map[string]interface{} {
 	ws.roomsMux.RLock()
 	defer ws.roomsMux.RUnlock()
@@ -387,11 +386,15 @@ func (ws *WebRTCService) GetRoomStatus(code string) map[string]interface{} {
 		}
 	}
 
+	// 检查房间是否已满（两个连接都已存在）
+	isRoomFull := room.Sender != nil && room.Receiver != nil
+
 	return map[string]interface{}{
 		"success":         true,
 		"exists":          true,
 		"sender_online":   room.Sender != nil,
 		"receiver_online": room.Receiver != nil,
+		"is_room_full":    isRoomFull,
 		"created_at":      room.CreatedAt,
 	}
 }

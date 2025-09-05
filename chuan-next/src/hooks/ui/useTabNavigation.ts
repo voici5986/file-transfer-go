@@ -3,16 +3,18 @@ import { useSearchParams } from 'next/navigation';
 import { useURLHandler, FeatureType } from './useURLHandler';
 import { useWebRTCStore } from './webRTCStore';
 import { useConfirmDialog } from './useConfirmDialog';
+import { useSharedWebRTCManager } from '../connection/useSharedWebRTCManager';
 
 // Tab类型定义（包括非WebRTC功能）
-export type TabType = 'webrtc' | 'message' | 'desktop' | 'wechat';
+export type TabType = 'webrtc' | 'message' | 'desktop' | 'wechat' | 'settings';
 
 // Tab显示名称
 const TAB_NAMES: Record<TabType, string> = {
   webrtc: '文件传输',
   message: '文字传输',
   desktop: '桌面共享',
-  wechat: '微信群'
+  wechat: '微信群',
+  settings: '设置'
 };
 
 // WebRTC功能的映射
@@ -34,8 +36,10 @@ export const useTabNavigation = () => {
     isConnecting, 
     isPeerConnected,
     currentRoom,
-    reset: resetWebRTCState 
   } = useWebRTCStore();
+
+  // 获取WebRTC连接管理器
+  const { disconnect: disconnectWebRTC } = useSharedWebRTCManager();
 
   // 创建一个通用的URL处理器（用于断开连接）
   const { hasActiveConnection } = useURLHandler({
@@ -76,28 +80,36 @@ export const useTabNavigation = () => {
     console.log('=== Tab切换 ===');
     console.log('当前tab:', activeTab, '目标tab:', newTab);
     
-    // 如果切换到wechat tab（非WebRTC功能），可以直接切换
-    if (newTab === 'wechat') {
-      // 如果有活跃连接，需要确认
-      if (hasActiveConnection()) {
-        const currentTabName = TAB_NAMES[activeTab];
-        const confirmed = await showConfirmDialog({
-          title: '切换功能确认',
-          message: `切换到微信群功能需要关闭当前的${currentTabName}连接，是否继续？`,
-          confirmText: '确认切换',
-          cancelText: '取消',
-          type: 'warning'
-        });
-        
-        if (!confirmed) {
-          return false;
-        }
-        
-        // 断开连接并清除状态
-        resetWebRTCState();
-        console.log('已清除WebRTC连接状态，切换到微信群');
+    // 对于任何非WebRTC功能的tab（wechat、settings），如果有活跃连接需要确认
+    if ((newTab === 'wechat' || newTab === 'settings') && hasActiveConnection()) {
+      const currentTabName = TAB_NAMES[activeTab];
+      const targetTabName = TAB_NAMES[newTab];
+      const confirmed = await showConfirmDialog({
+        title: '切换功能确认',
+        message: `切换到${targetTabName}需要断开当前的${currentTabName}连接，是否继续？`,
+        confirmText: '确认切换',
+        cancelText: '取消',
+        type: 'warning'
+      });
+      
+      if (!confirmed) {
+        return false;
       }
       
+      // 断开连接并清除状态
+      disconnectWebRTC();
+      console.log(`已清除WebRTC连接状态，切换到${targetTabName}`);
+      
+      setActiveTab(newTab);
+      // 清除URL参数
+      const newUrl = new URL(window.location.href);
+      newUrl.search = '';
+      window.history.pushState({}, '', newUrl.toString());
+      return true;
+    }
+
+    // 如果切换到非活跃连接的wechat或settings tab，直接切换
+    if (newTab === 'wechat' || newTab === 'settings') {
       setActiveTab(newTab);
       // 清除URL参数
       const newUrl = new URL(window.location.href);
@@ -124,7 +136,7 @@ export const useTabNavigation = () => {
       }
 
       // 用户确认后，重置WebRTC状态
-      resetWebRTCState();
+      disconnectWebRTC();
       console.log(`已断开${currentTabName}连接，切换到${targetTabName}`);
     }
 
@@ -146,7 +158,7 @@ export const useTabNavigation = () => {
     }
     
     return true;
-  }, [activeTab, hasActiveConnection, resetWebRTCState]);
+  }, [activeTab, hasActiveConnection, disconnectWebRTC]);
 
   // 获取连接状态信息
   const getConnectionInfo = useCallback(() => {

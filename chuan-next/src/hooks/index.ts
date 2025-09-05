@@ -15,5 +15,3 @@ export * from './text-transfer';
 // UI状态管理相关
 export * from './ui';
 
-// 核心WebRTC功能
-export * from './webrtc';
