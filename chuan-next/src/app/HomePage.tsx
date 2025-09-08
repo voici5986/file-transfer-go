@@ -4,6 +4,7 @@ import React from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, MessageSquare, Monitor, Users, Settings } from 'lucide-react';
 import Hero from '@/components/Hero';
+import Footer from '@/components/Footer';
 import { WebRTCFileTransfer } from '@/components/WebRTCFileTransfer';
 import { WebRTCTextImageTransfer } from '@/components/WebRTCTextImageTransfer';
 import DesktopShare from '@/components/DesktopShare';
@@ -45,12 +46,13 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <div className="container mx-auto px-4 py-4 sm:py-6 md:py-8">
-        {/* Hero Section */}
-        <div className="text-center mb-6 sm:mb-8">
-          <Hero />
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex flex-col">
+      <div className="flex-1">
+        <div className="container mx-auto px-4 py-2 sm:py-4 md:py-6">
+          {/* Hero Section */}
+          <div className="text-center mb-4 sm:mb-6">
+            <Hero />
+          </div>
 
         {/* WebRTC 支持检测加载状态 */}
         {!isChecked && (
@@ -171,7 +173,11 @@ export default function HomePage() {
             </Tabs>
           </div>
         )}
+        </div>
       </div>
+
+      {/* 页脚 */}
+      <Footer />
 
       {/* WebRTC 不支持提示模态框 */}
       {webrtcSupport && (
