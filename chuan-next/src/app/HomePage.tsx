@@ -2,18 +2,24 @@
 
 import React from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, MessageSquare, Monitor, Users } from 'lucide-react';
+import { Upload, MessageSquare, Monitor, Users, Settings } from 'lucide-react';
 import Hero from '@/components/Hero';
+import Footer from '@/components/Footer';
 import { WebRTCFileTransfer } from '@/components/WebRTCFileTransfer';
 import { WebRTCTextImageTransfer } from '@/components/WebRTCTextImageTransfer';
 import DesktopShare from '@/components/DesktopShare';
 import WeChatGroup from '@/components/WeChatGroup';
+import WebRTCSettings from '@/components/WebRTCSettings';
 import { WebRTCUnsupportedModal } from '@/components/WebRTCUnsupportedModal';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useWebRTCSupport } from '@/hooks/connection';
 import { useTabNavigation, TabType } from '@/hooks/ui';
+import { useWebRTCConfigSync } from '@/hooks/settings';
 
 export default function HomePage() {
+  // WebRTC配置同步
+  useWebRTCConfigSync();
+  
   // 使用tab导航hook
   const { 
     activeTab, 
@@ -40,12 +46,13 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <div className="container mx-auto px-4 py-4 sm:py-6 md:py-8">
-        {/* Hero Section */}
-        <div className="text-center mb-6 sm:mb-8">
-          <Hero />
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex flex-col">
+      <div className="flex-1">
+        <div className="container mx-auto px-4 py-2 sm:py-4 md:py-6">
+          {/* Hero Section */}
+          <div className="text-center mb-4 sm:mb-6">
+            <Hero />
+          </div>
 
         {/* WebRTC 支持检测加载状态 */}
         {!isChecked && (
@@ -84,7 +91,7 @@ export default function HomePage() {
             <Tabs value={activeTab} onValueChange={handleTabChangeWrapper} className="w-full">
               {/* Tabs Navigation - 横向布局 */}
               <div className="mb-6">
-                <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto h-auto bg-white/90 backdrop-blur-sm shadow-lg rounded-xl p-2 border border-slate-200">
+                <TabsList className="grid w-full grid-cols-5 max-w-3xl mx-auto h-auto bg-white/90 backdrop-blur-sm shadow-lg rounded-xl p-2 border border-slate-200">
                   <TabsTrigger 
                     value="webrtc" 
                     className="flex items-center justify-center space-x-2 px-3 py-3 text-sm font-medium rounded-lg transition-all duration-200 hover:bg-slate-50 data-[state=active]:bg-blue-500 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:bg-blue-600"
@@ -122,7 +129,15 @@ export default function HomePage() {
                     <Users className="w-4 h-4" />
                     <span className="hidden sm:inline">微信群</span>
                     <span className="sm:hidden">微信</span>
-                  </TabsTrigger>                
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="settings" 
+                    className="flex items-center justify-center space-x-2 px-3 py-3 text-sm font-medium rounded-lg transition-all duration-200 hover:bg-slate-50 data-[state=active]:bg-orange-500 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:hover:bg-orange-600"
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span className="hidden sm:inline">中继设置</span>
+                    <span className="sm:hidden">设置</span>
+                  </TabsTrigger>               
                 </TabsList>
                 
                 {/* WebRTC 不支持时的提示 */}
@@ -150,11 +165,19 @@ export default function HomePage() {
                 <TabsContent value="wechat" className="mt-0 animate-fade-in-up">
                   <WeChatGroup />
                 </TabsContent>
+
+                <TabsContent value="settings" className="mt-0 animate-fade-in-up">
+                  <WebRTCSettings />
+                </TabsContent>
               </div>
             </Tabs>
           </div>
         )}
+        </div>
       </div>
+
+      {/* 页脚 */}
+      <Footer />
 
       {/* WebRTC 不支持提示模态框 */}
       {webrtcSupport && (

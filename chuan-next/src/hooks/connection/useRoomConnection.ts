@@ -38,6 +38,11 @@ export const useRoomConnection = ({ connect, isConnecting, isConnected }: UseRoo
       throw new Error(errorMessage);
     }
     
+    // 检查房间是否已满
+    if (result.is_room_full) {
+      throw new Error('当前房间人数已满，正在传输中无法加入');
+    }
+    
     if (!result.sender_online) {
       throw new Error('发送方不在线，请确认取件码是否正确或联系发送方');
     }
@@ -54,6 +59,8 @@ export const useRoomConnection = ({ connect, isConnecting, isConnected }: UseRoo
       return '房间不存在，请检查取件码';
     } else if (error.message.includes('HTTP 500')) {
       return '服务器错误，请稍后重试';
+    } else if (error.message.includes('房间人数已满') || error.message.includes('正在传输中无法加入')) {
+      return '当前房间人数已满，正在传输中无法加入，请稍后再试';
     } else {
       return error.message;
     }

@@ -141,7 +141,23 @@ export const WebRTCTextReceiver: React.FC<WebRTCTextReceiverProps> = ({
       const roomData = await response.json();
       
       if (!response.ok) {
-        throw new Error(roomData.error || '房间不存在或已过期');
+        let errorMessage = roomData.error || '房间不存在或已过期';
+        
+        // 特殊处理房间人数已满的情况
+        if (roomData.message?.includes('房间人数已满') || roomData.message?.includes('正在传输中无法加入')) {
+          errorMessage = '当前房间人数已满，正在传输中无法加入，请稍后再试';
+        } else if (roomData.message?.includes('expired')) {
+          errorMessage = '房间已过期，请联系发送方重新创建';
+        } else if (roomData.message?.includes('not found')) {
+          errorMessage = '房间不存在，请检查取件码是否正确';
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      // 检查房间是否已满
+      if (roomData.is_room_full) {
+        throw new Error('当前房间人数已满，正在传输中无法加入，请稍后再试');
       }
 
       console.log('=== 房间验证成功 ===', roomData);

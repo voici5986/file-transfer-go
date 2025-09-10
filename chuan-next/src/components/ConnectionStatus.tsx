@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { cn } from '@/lib/utils';
 import { useWebRTCStore } from '@/hooks/index';
 
@@ -234,32 +234,8 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
           </div>
         </div>
 
-        {/* 错误信息
-        {connection.error && (
-          <div className="text-xs text-red-600 bg-red-50 rounded p-2">
-            {connection.error}
-          </div>
-        )} */}
       </div>
     </div>
   );
 }
 
-// 简化版本的 Hook，用于快速集成 - 现在已经不需要了，但保留兼容性
-export function useConnectionStatus(webrtcConnection?: { isWebSocketConnected?: boolean; isPeerConnected?: boolean; isConnecting?: boolean; currentRoom?: { code: string; role: 'sender' | 'receiver' } | null; error?: string | null }) {
-  // 这个hook现在不再需要，因为ConnectionStatus组件直接使用底层连接
-  // 但为了向后兼容，保留这个接口
-  return useMemo(() => ({
-    isWebSocketConnected: webrtcConnection?.isWebSocketConnected || false,
-    isPeerConnected: webrtcConnection?.isPeerConnected || false,
-    isConnecting: webrtcConnection?.isConnecting || false,
-    currentRoom: webrtcConnection?.currentRoom || null,
-    error: webrtcConnection?.error || null,
-  }), [
-    webrtcConnection?.isWebSocketConnected,
-    webrtcConnection?.isPeerConnected,
-    webrtcConnection?.isConnecting,
-    webrtcConnection?.currentRoom,
-    webrtcConnection?.error,
-  ]);
-}

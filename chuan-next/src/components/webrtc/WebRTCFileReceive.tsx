@@ -76,12 +76,29 @@ export function WebRTCFileReceive({
       console.log('验证响应:', { status: response.status, data });
       
       if (!response.ok || !data.success) {
-        const errorMessage = data.message || '取件码验证失败';
+        let errorMessage = data.message || '取件码验证失败';
+        
+        // 特殊处理房间人数已满的情况
+        if (data.message?.includes('房间人数已满') || data.message?.includes('正在传输中无法加入')) {
+          errorMessage = '当前房间人数已满，正在传输中无法加入，请稍后再试';
+        } else if (data.message?.includes('expired')) {
+          errorMessage = '房间已过期，请联系发送方重新创建';
+        } else if (data.message?.includes('not found')) {
+          errorMessage = '房间不存在，请检查取件码是否正确';
+        }
         
         // 显示toast错误提示
         showToast(errorMessage, 'error');
         
         console.log('验证失败:', errorMessage);
+        return false;
+      }
+      
+      // 检查房间是否已满
+      if (data.is_room_full) {
+        const errorMessage = '当前房间人数已满，正在传输中无法加入，请稍后再试';
+        showToast(errorMessage, 'error');
+        console.log('房间已满:', errorMessage);
         return false;
       }
       

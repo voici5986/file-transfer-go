@@ -37,7 +37,12 @@ export default function DesktopViewer({
     if (videoRef.current && stream) {
       console.log('[DesktopViewer] 🎬 设置视频流，轨道数量:', stream.getTracks().length);
       stream.getTracks().forEach(track => {
-        console.log('[DesktopViewer] 轨道详情:', track.kind, track.id, track.enabled, track.readyState);
+        console.log('[DesktopViewer] 轨道详情:', track.kind, track.id, '启用:', track.enabled, '状态:', track.readyState);
+        // 确保轨道已启用
+        if (!track.enabled) {
+          console.log('[DesktopViewer] 🔓 启用轨道:', track.id);
+          track.enabled = true;
+        }
       });
       
       videoRef.current.srcObject = stream;
@@ -82,7 +87,31 @@ export default function DesktopViewer({
         console.log('[DesktopViewer] 📹 视频暂停');
         setIsPlaying(false);
       };
-      const handleError = (e: Event) => console.error('[DesktopViewer] 📹 视频播放错误:', e);
+      const handleError = (e: Event) => {
+        console.error('[DesktopViewer] 📹 视频播放错误:', e);
+        // 尝试重新加载流
+        console.log('[DesktopViewer] 🔄 尝试重新加载视频流');
+        setTimeout(() => {
+          if (videoRef.current && stream) {
+            videoRef.current.srcObject = null;
+            videoRef.current.srcObject = stream;
+            if (!hasAttemptedAutoplayRef.current) {
+              hasAttemptedAutoplayRef.current = true;
+              videoRef.current.play()
+                .then(() => {
+                  console.log('[DesktopViewer] ✅ 重新加载后视频播放成功');
+                  setIsPlaying(true);
+                  setNeedsUserInteraction(false);
+                })
+                .catch(err => {
+                  console.log('[DesktopViewer] 📹 重新加载后自动播放仍被阻止:', err.message);
+                  setIsPlaying(false);
+                  setNeedsUserInteraction(true);
+                });
+            }
+          }
+        }, 1000);
+      };
       
       video.addEventListener('loadstart', handleLoadStart);
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
