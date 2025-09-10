@@ -1,0 +1,88 @@
+name: Sync Upstream File Transfer Go
+
+on:
+  # 每天UTC时间00:00自动运行（北京时间08:00）
+  schedule:
+    - cron: '0 0 * * *'
+  
+  # 也可以手动触发
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        # 获取完整的git历史，以便能够正确合并
+        fetch-depth: 0
+        # 使用GitHub token进行认证
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Configure Git
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Add upstream remote
+      run: |
+        git remote add upstream https://github.com/MatrixSeven/file-transfer-go.git
+
+    - name: Fetch upstream changes
+      run: |
+        git fetch upstream
+
+    - name: Check for changes
+      id: check_changes
+      run: |
+        # 检查上游是否有新的提交
+        LOCAL=$(git rev-parse HEAD)
+        REMOTE=$(git rev-parse upstream/main)
+        if [ $LOCAL != $REMOTE ]; then
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "发现上游 File Transfer Go 有新的更新"
+        else
+          echo "changes=false" >> $GITHUB_OUTPUT
+          echo "上游 File Transfer Go 没有新的更新"
+        fi
+
+    - name: Merge upstream changes
+      if: steps.check_changes.outputs.changes == 'true'
+      run: |
+        # 尝试自动合并上游的main分支
+        git merge upstream/main --no-edit
+        
+    - name: Push changes
+      if: steps.check_changes.outputs.changes == 'true'
+      run: |
+        git push origin main
+        
+    - name: Create Pull Request on conflict
+      if: failure() && steps.check_changes.outputs.changes == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        branch: sync-upstream-file-transfer-go-${{ github.run_number }}
+        title: "同步 File Transfer Go 上游仓库更新"
+        body: |
+          这是一个自动生成的PR，用于同步 File Transfer Go 上游仓库的更新。
+          
+          由于存在冲突，无法自动合并，请手动解决冲突后合并此PR。
+          
+          上游仓库: https://github.com/MatrixSeven/file-transfer-go
+          
+          ## 更新内容
+          请查看commits了解具体更新内容。
+          
+          ## 注意事项
+          - 这是 Go 语言文件传输工具的更新
+          - 请检查是否有 Go 模块依赖的变更
+          - 建议检查 go.mod 和 go.sum 文件
+          - 合并前建议测试文件传输功能
+        labels: |
+          sync
+          automated
+          file-transfer
+          golang
