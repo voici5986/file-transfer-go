@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Download, FileText, Image, Video, Music, Archive } from 'lucide-react';
+import { Download, FileText, Image, Video, Music, Archive, Clock, Zap } from 'lucide-react';
 import { useToast } from '@/components/ui/toast-simple';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { TransferProgressTracker, formatTransferSpeed, formatTime } from '@/lib/transfer-utils';
 
 interface FileInfo {
   id: string;
@@ -14,6 +15,8 @@ interface FileInfo {
   type: string;
   status: 'ready' | 'downloading' | 'completed';
   progress: number;
+  transferSpeed?: number; // bytes per second
+  startTime?: number; // 传输开始时间
 }
 
 const getFileIcon = (mimeType: string) => {
@@ -60,6 +63,9 @@ export function WebRTCFileReceive({
   const [pickupCode, setPickupCode] = useState('');
   const [isValidating, setIsValidating] = useState(false);
   const { showToast } = useToast();
+  
+  // 用于跟踪传输进度的trackers
+  const transferTrackers = useRef<Map<string, TransferProgressTracker>>(new Map());
 
   // 使用传入的取件码或本地状态的取件码
   const displayPickupCode = propPickupCode || pickupCode;
@@ -242,15 +248,43 @@ export function WebRTCFileReceive({
               const isDownloading = file.status === 'downloading';
               const isCompleted = file.status === 'completed';
               const hasDownloadedFile = downloadedFiles?.has(file.id);
-              const currentProgress = file.progress;
               
               console.log('文件状态:', {
                 fileName: file.name,
                 status: file.status,
                 progress: file.progress,
-                isDownloading,
-                currentProgress
+                isDownloading
               });
+              
+              // 计算传输进度信息
+              let transferInfo = null;
+              let currentProgress = 0; // 使用稳定的进度值
+              
+              if (isDownloading && file) {
+                const fileKey = `${file.name}-${file.size}`;
+                let tracker = transferTrackers.current.get(fileKey);
+                
+                // 如果tracker不存在，创建一个新的
+                if (!tracker) {
+                  tracker = new TransferProgressTracker(file.size);
+                  transferTrackers.current.set(fileKey, tracker);
+                }
+                
+                // 更新传输进度
+                const transferredBytes = (file.progress / 100) * file.size;
+                const progressInfo = tracker.update(transferredBytes);
+                transferInfo = progressInfo;
+                currentProgress = progressInfo.percentage; // 使用稳定的百分比
+              } else {
+                // 如果不在传输中，使用原始进度值
+                currentProgress = file.progress;
+              }
+
+              // 清理已完成的tracker
+              if (file.status === 'completed') {
+                const fileKey = `${file.name}-${file.size}`;
+                transferTrackers.current.delete(fileKey);
+              }
               
               return (
                 <div key={file.id} className="bg-gradient-to-r from-slate-50 to-blue-50 border border-slate-200 rounded-xl p-3 sm:p-4 hover:shadow-md transition-all duration-200">
@@ -266,7 +300,27 @@ export function WebRTCFileReceive({
                           <p className="text-xs text-emerald-600 font-medium">✅ 传输完成，点击保存</p>
                         )}
                         {isDownloading && (
-                          <p className="text-xs text-blue-600 font-medium">⏳ 传输中...{currentProgress.toFixed(1)}%</p>
+                          <div className="space-y-1">
+                            {/* 传输速度和剩余时间信息 */}
+                            {transferInfo && (
+                              <div className="flex items-center space-x-3"> 
+                                <div className="flex items-center gap-1 text-xs text-blue-600">
+                                  <Zap className="w-3 h-3 flex-shrink-0" />
+                                  <span className="w-3 font-mono text-right">{transferInfo.speed.displaySpeed}</span>
+                                  <span className='w-2'/>
+                                  <span className="w-3">{transferInfo.speed.unit}</span>
+                                  <span className='w-3'/>
+                                </div>
+                                {transferInfo.remainingTime.seconds < Infinity && (
+                                  <div className="flex items-center gap-1 text-xs text-slate-600">
+                                    <Clock className="w-3 h-3 flex-shrink-0" />
+                                    <span>剩余</span>
+                                    <span className="w-3 font-mono text-right">{transferInfo.remainingTime.display}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -289,7 +343,9 @@ export function WebRTCFileReceive({
                   {(isDownloading || isCompleted) && currentProgress > 0 && (
                     <div className="mt-3 space-y-2">
                       <div className="flex justify-between text-sm text-slate-600">
-                        <span>{hasDownloadedFile ? '传输完成' : '正在传输...'}</span>
+                        <span>
+                          {hasDownloadedFile ? '传输完成' : '正在传输...'}                          
+                        </span>
                         <span className="font-medium">{currentProgress.toFixed(1)}%</span>
                       </div>
                       <div className="w-full bg-slate-200 rounded-full h-2">

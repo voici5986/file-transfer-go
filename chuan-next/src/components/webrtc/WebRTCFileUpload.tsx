@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Upload, FileText, Image, Video, Music, Archive, X } from 'lucide-react';
+import { Upload, FileText, Image, Video, Music, Archive, X, Clock, Zap } from 'lucide-react';
 import RoomInfoDisplay from '@/components/RoomInfoDisplay';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { TransferProgressTracker, formatTransferSpeed, formatTime } from '@/lib/transfer-utils';
 
 
 interface FileInfo {
@@ -14,6 +15,8 @@ interface FileInfo {
   type: string;
   status: 'ready' | 'downloading' | 'completed';
   progress: number;
+  transferSpeed?: number; // bytes per second
+  startTime?: number; // 传输开始时间
 }
 
 const getFileIcon = (mimeType: string) => {
@@ -65,6 +68,9 @@ export function WebRTCFileUpload({
 }: WebRTCFileUploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // 用于跟踪传输进度的trackers
+  const transferTrackers = useRef<Map<string, TransferProgressTracker>>(new Map());
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -197,8 +203,37 @@ export function WebRTCFileUpload({
             // 查找对应的文件信息（包含状态和进度）
             const fileInfo = fileList.find(f => f.name === file.name && f.size === file.size);
             const isTransferringThisFile = fileInfo?.status === 'downloading';
-            const currentProgress = fileInfo?.progress || 0;
             const fileStatus = fileInfo?.status || 'ready';
+            
+            // 计算传输进度信息
+            let transferInfo = null;
+            let currentProgress = 0; // 使用稳定的进度值
+            
+            if (isTransferringThisFile && fileInfo) {
+              const fileKey = `${file.name}-${file.size}`;
+              let tracker = transferTrackers.current.get(fileKey);
+              
+              // 如果tracker不存在，创建一个新的
+              if (!tracker) {
+                tracker = new TransferProgressTracker(file.size);
+                transferTrackers.current.set(fileKey, tracker);
+              }
+              
+              // 更新传输进度
+              const transferredBytes = (fileInfo.progress / 100) * file.size;
+              const progressInfo = tracker.update(transferredBytes);
+              transferInfo = progressInfo;
+              currentProgress = progressInfo.percentage; // 使用稳定的百分比
+            } else {
+              // 如果不在传输中，使用原始进度值
+              currentProgress = fileInfo?.progress || 0;
+            }
+
+            // 清理已完成的tracker
+            if (fileStatus === 'completed') {
+              const fileKey = `${file.name}-${file.size}`;
+              transferTrackers.current.delete(fileKey);
+            }
             
             return (
               <div
@@ -227,6 +262,26 @@ export function WebRTCFileUpload({
                           </div>
                         )}
                       </div>
+                      
+                      {/* 传输速度和剩余时间信息 */}
+                      {transferInfo && (
+                        <div className="flex items-center space-x-3 mt-1">
+                          <div className="flex items-center gap-1 text-xs text-blue-600">
+                            <Zap className="w-3 h-3 flex-shrink-0" />
+                            <span className="w-3 font-mono text-right">{transferInfo.speed.displaySpeed}</span>
+                              <span className='w-2'/>
+                            <span className="w-3">{transferInfo.speed.unit}</span>
+                                   <span className='w-3'/>
+                          </div>
+                          {transferInfo.remainingTime.seconds < Infinity && (
+                            <div className="flex items-center gap-1 text-xs text-slate-600">
+                              <Clock className="w-3 h-3 flex-shrink-0" />
+                              <span>剩余</span>
+                              <span className="w-3 font-mono text-right">{transferInfo.remainingTime.display}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <Button
@@ -245,7 +300,9 @@ export function WebRTCFileUpload({
                   <div className="px-3 sm:px-4 pb-3 sm:pb-4">
                     <div className="space-y-2">
                       <div className="flex justify-between text-xs text-slate-600">
-                        <span>{fileStatus === 'downloading' ? '正在发送...' : '发送完成'}</span>
+                        <span>
+                          {fileStatus === 'downloading' ? '正在发送...' : '发送完成'}
+                        </span>
                         <span className="font-medium">{currentProgress.toFixed(1)}%</span>
                       </div>
                       <div className="w-full bg-slate-200 rounded-full h-2">

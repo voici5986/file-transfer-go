@@ -7,6 +7,8 @@ interface FileInfo {
   type: string;
   status: 'ready' | 'downloading' | 'completed';
   progress: number;
+  transferSpeed?: number; // bytes per second
+  startTime?: number; // 传输开始时间
 }
 
 interface UseFileStateManagerProps {
@@ -72,21 +74,33 @@ export const useFileStateManager = ({
   }, []);
 
   // 更新文件状态
-  const updateFileStatus = useCallback((fileId: string, status: FileInfo['status'], progress?: number) => {
+  const updateFileStatus = useCallback((fileId: string, status: FileInfo['status'], progress?: number, transferSpeed?: number) => {
     setFileList(prev => prev.map(item => 
       item.id === fileId 
-        ? { ...item, status, progress: progress ?? item.progress }
+        ? { 
+            ...item, 
+            status, 
+            progress: progress ?? item.progress,
+            transferSpeed: transferSpeed ?? item.transferSpeed,
+            startTime: status === 'downloading' && !item.startTime ? Date.now() : item.startTime
+          }
         : item
     ));
   }, []);
 
   // 更新文件进度
-  const updateFileProgress = useCallback((fileId: string, fileName: string, progress: number) => {
+  const updateFileProgress = useCallback((fileId: string, fileName: string, progress: number, transferSpeed?: number) => {
     const newStatus = progress >= 100 ? 'completed' as const : 'downloading' as const;
     setFileList(prev => prev.map(item => {
       if (item.id === fileId || item.name === fileName) {
-        console.log(`更新文件 ${item.name} 进度: ${item.progress} -> ${progress}`);
-        return { ...item, progress, status: newStatus };
+        console.log(`更新文件 ${item.name} 进度: ${item.progress} -> ${progress}${transferSpeed ? `, 速度: ${transferSpeed} B/s` : ''}`);
+        return { 
+          ...item, 
+          progress, 
+          status: newStatus,
+          transferSpeed: transferSpeed ?? item.transferSpeed,
+          startTime: newStatus === 'downloading' && !item.startTime ? Date.now() : item.startTime
+        };
       }
       return item;
     }));
