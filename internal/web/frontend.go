@@ -5,7 +5,9 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -25,6 +27,15 @@ func hasFrontendFiles() bool {
 
 // CreateFrontendHandler 创建前端文件处理器
 func CreateFrontendHandler() http.Handler {
+	// 检查是否配置了外部前端目录
+	if frontendDir := os.Getenv("FRONTEND_DIR"); frontendDir != "" {
+		if info, err := os.Stat(frontendDir); err == nil && info.IsDir() {
+			// 使用外部前端目录
+			return &externalSpaHandler{baseDir: frontendDir}
+		}
+	}
+
+	// 使用内嵌的前端文件
 	if !hasFrontendFiles() {
 		return &placeholderHandler{}
 	}
@@ -59,6 +70,7 @@ func (h *placeholderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         pre { margin: 0; overflow-x: auto; }
         .api-list { margin: 20px 0; }
         .api-item { margin: 10px 0; padding: 10px; background: #e3f2fd; border-radius: 4px; }
+        .env-config { background: #e8f5e8; padding: 15px; border-radius: 4px; margin: 20px 0; }
     </style>
 </head>
 <body>
@@ -69,11 +81,21 @@ func (h *placeholderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
             ⚠️ 前端界面未构建，当前显示的是后端 API 服务。
         </div>
         
-        <h2>📋 可用的 API 接口</h2>
+        <h2>� 环境变量配置</h2>
+        <div class="env-config">
+            <strong>FRONTEND_DIR</strong> - 指定外部前端文件目录<br>
+            <strong>PORT</strong> - 自定义服务端口 (默认: 8080)<br><br>
+            <strong>示例:</strong><br>
+            <pre>export FRONTEND_DIR=/path/to/frontend
+export PORT=3000
+./file-transfer-server</pre>
+        </div>
+        
+        <h2>�📋 可用的 API 接口</h2>
         <div class="api-list">
-            <div class="api-item"><strong>POST</strong> /api/create-text-room - 创建文本传输房间</div>
-            <div class="api-item"><strong>GET</strong> /api/get-text-content/* - 获取文本内容</div>
-            <div class="api-item"><strong>WebSocket</strong> /ws/webrtc - WebRTC 信令连接</div>
+            <div class="api-item"><strong>POST</strong> /api/create-room - 创建WebRTC房间</div>
+            <div class="api-item"><strong>GET</strong> /api/room-info - 获取房间信息</div>
+            <div class="api-item"><strong>WebSocket</strong> /api/ws/webrtc - WebRTC 信令连接</div>
         </div>
         
         <h2>🛠️ 构建前端</h2>
@@ -82,14 +104,18 @@ func (h *placeholderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 cd chuan-next
 
 # 安装依赖
-yarn install
+npm install
 
 # 构建静态文件
-yarn build:ssg
+npm run build
 
-# 重新构建 Go 项目以嵌入前端文件
+# 方法1: 重新构建 Go 项目以嵌入前端文件
 cd ..
-go build -o file-transfer-server ./cmd</pre>
+go build -o file-transfer-server ./cmd
+
+# 方法2: 使用外部前端目录
+export FRONTEND_DIR=./chuan-next/out
+./file-transfer-server</pre>
         </div>
         
         <p><strong>提示:</strong> 构建完成后刷新页面即可看到完整的前端界面。</p>
@@ -97,6 +123,61 @@ go build -o file-transfer-server ./cmd</pre>
 </body>
 </html>
 	`))
+}
+
+// externalSpaHandler 外部文件目录处理器
+type externalSpaHandler struct {
+	baseDir string
+}
+
+func (h *externalSpaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 清理路径
+	upath := strings.TrimPrefix(r.URL.Path, "/")
+	if upath == "" {
+		upath = "index.html"
+	}
+
+	// 构建完整文件路径
+	fullPath := filepath.Join(h.baseDir, upath)
+	
+	// 安全检查：确保文件在基础目录内
+	absBasePath, err := filepath.Abs(h.baseDir)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	
+	absFullPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	
+	if !strings.HasPrefix(absFullPath, absBasePath) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// 检查文件是否存在
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		// 文件不存在，对于 SPA 应用返回 index.html
+		h.serveIndexHTML(w, r)
+		return
+	}
+
+	// 服务文件
+	http.ServeFile(w, r, fullPath)
+}
+
+// serveIndexHTML 服务外部目录的 index.html 文件
+func (h *externalSpaHandler) serveIndexHTML(w http.ResponseWriter, r *http.Request) {
+	indexPath := filepath.Join(h.baseDir, "index.html")
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		http.NotFound(w, r)
+		return
+	}
+	
+	http.ServeFile(w, r, indexPath)
 }
 
 // spaHandler SPA 应用处理器
