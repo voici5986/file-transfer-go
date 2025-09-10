@@ -25,6 +25,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
+      <head>
+        <script defer src="https://track.biu.52python.cn/script.js" data-website-id="28f20618-8d31-421d-8ee2-16fcde0e299a"></script>
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

@@ -7,36 +7,48 @@ export interface IceServerConfig {
   credential?: string;
   type: 'stun' | 'turn';
   enabled: boolean;
+  isDefault?: boolean; // 标记是否为默认服务器
 }
 
 const DEFAULT_ICE_SERVERS: IceServerConfig[] = [
+  {
+    id: 'easyvoip-stun',
+    urls: 'stun:stun.easyvoip.com:3478',
+    type: 'stun',
+    enabled: true,
+    isDefault: true,
+  },
+   {
+    id: 'miwifi-stun',
+    urls: 'stun:stun.miwifi.com:3478',
+    type: 'stun',
+    enabled: true,
+    isDefault: true,
+  },
   {
     id: 'google-stun-1',
     urls: 'stun:stun.l.google.com:19302',
     type: 'stun',
     enabled: true,
+    isDefault: true,
   },
   {
     id: 'google-stun-2',
     urls: 'stun:stun1.l.google.com:19302',
     type: 'stun',
     enabled: true,
-  },
-  {
-    id: 'google-stun-3',
-    urls: 'stun:stun2.l.google.com:19302',
-    type: 'stun',
-    enabled: true,
+    isDefault: true,
   },
   {
     id: 'twilio-stun',
     urls: 'stun:global.stun.twilio.com:3478',
     type: 'stun',
     enabled: true,
-  },
+    isDefault: true,
+  }
 ];
 
-const STORAGE_KEY = 'webrtc-ice-servers-config';
+const STORAGE_KEY = 'webrtc-ice-servers-config-090901';
 
 export function useIceServersConfig() {
   const [iceServers, setIceServers] = useState<IceServerConfig[]>([]);
@@ -48,7 +60,13 @@ export function useIceServersConfig() {
       const savedConfig = localStorage.getItem(STORAGE_KEY);
       if (savedConfig) {
         const parsed = JSON.parse(savedConfig);
-        setIceServers(parsed);
+        // 确保所有服务器都有isDefault属性
+        const serversWithDefaults = parsed.map((server: any) => ({
+          ...server,
+          isDefault: server.isDefault !== undefined ? server.isDefault : 
+            DEFAULT_ICE_SERVERS.some(defaultServer => defaultServer.id === server.id)
+        }));
+        setIceServers(serversWithDefaults);
       } else {
         setIceServers(DEFAULT_ICE_SERVERS);
       }
@@ -76,6 +94,7 @@ export function useIceServersConfig() {
     const newServer: IceServerConfig = {
       ...config,
       id: `custom-${Date.now()}`,
+      isDefault: false, // 用户添加的服务器不标记为默认
     };
     const updatedServers = [...iceServers, newServer];
     saveConfig(updatedServers);
@@ -95,6 +114,7 @@ export function useIceServersConfig() {
     if (iceServers.length <= 1) {
       throw new Error('至少需要保留一个ICE服务器');
     }
+    
     const updatedServers = iceServers.filter(server => server.id !== id);
     saveConfig(updatedServers);
   }, [iceServers, saveConfig]);

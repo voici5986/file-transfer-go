@@ -251,8 +251,6 @@ interface ServerItemProps {
 }
 
 function ServerItem({ server, onRemove, canRemove }: ServerItemProps) {
-  const isDefault = server.id.startsWith('google-') || server.id.startsWith('twilio-');
-
   return (
     <div className="border rounded-lg p-3 sm:p-4 bg-white">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -261,8 +259,8 @@ function ServerItem({ server, onRemove, canRemove }: ServerItemProps) {
             <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded whitespace-nowrap">
               {server.type?.toUpperCase() || 'STUN'}
             </span>
-            {isDefault && (
-              <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded whitespace-nowrap">
+            {server.isDefault && (
+              <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded whitespace-nowrap">
                 默认
               </span>
             )}
@@ -341,7 +339,8 @@ export default function WebRTCSettings() {
         removeIceServer(serverToDelete);
         showToast('ICE服务器删除成功', 'success');
       } catch (error) {
-        showToast('至少需要保留一个ICE服务器', 'error');
+        const errorMessage = error instanceof Error ? error.message : '删除失败';
+        showToast(errorMessage, 'error');
       } finally {
         setServerToDelete(null);
         setShowDeleteDialog(false);
@@ -518,6 +517,13 @@ export default function WebRTCSettings() {
                   格式：<code className="bg-gray-100 px-1 py-0.5 rounded text-xs">turn:服务器地址:端口</code>
                 </p>
               </div>
+
+              <div>
+                <h4 className="font-medium text-gray-900 mb-1">默认服务器:</h4>
+                <p className="text-gray-600">
+                  系统预置的可靠ICE服务器，建议保留以确保连接稳定性。可以根据需要删除或添加自定义服务器。
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -537,7 +543,19 @@ export default function WebRTCSettings() {
         onClose={cancelDeleteServer}
         onConfirm={confirmDeleteServer}
         title="删除ICE服务器"
-        message={`确定要删除这个ICE服务器吗？删除后将无法恢复。${iceServers.length <= 1 ? '\n\n注意：这是最后一个服务器，删除后将无法建立WebRTC连接。' : ''}`}
+        message={(() => {
+          if (!serverToDelete) return "确定要删除这个ICE服务器吗？";
+          
+          const serverToDeleteInfo = iceServers.find(s => s.id === serverToDelete);
+          
+          if (iceServers.length <= 1) {
+            return "这是最后一个ICE服务器，删除后将无法建立WebRTC连接。确定要删除吗？";
+          } else if (serverToDeleteInfo?.isDefault) {
+            return "这是一个默认ICE服务器，删除后可能需要手动添加其他服务器。确定要删除吗？";
+          } else {
+            return "确定要删除这个ICE服务器吗？删除后将无法恢复。";
+          }
+        })()}
         confirmText="删除"
         cancelText="取消"
         type="danger"
