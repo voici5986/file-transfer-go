@@ -51,10 +51,8 @@ func setupMiddleware(r *chi.Mux) {
 func setupAPIRoutes(r *chi.Mux, h *handlers.Handler) {
 	// WebRTC信令WebSocket路由
 	r.Get("/api/ws/webrtc", h.HandleWebRTCWebSocket)
-	r.Get("/ws/webrtc", h.HandleWebRTCWebSocket)
 
 	// WebRTC房间API
 	r.Post("/api/create-room", h.CreateRoomHandler)
 	r.Get("/api/room-info", h.WebRTCRoomStatusHandler)
-	r.Get("/api/webrtc-room-status", h.WebRTCRoomStatusHandler)
 }

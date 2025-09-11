@@ -106,13 +106,6 @@ export class ClientAPI {
   async getRoomInfo(code: string): Promise<ApiResponse> {
     return this.get(`/api/room-info?code=${code}`);
   }
-
-  /**
-   * 获取WebRTC房间状态
-   */
-  async getWebRTCRoomStatus(code: string): Promise<ApiResponse> {
-    return this.get(`/api/webrtc-room-status?code=${code}`);
-  }
 }
 
 // 导出单例实例
