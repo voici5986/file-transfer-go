@@ -602,39 +602,86 @@ export function useFileTransferBusiness(connection: IWebConnection) {
     // 检查连接状态 - 优先检查数据通道状态，因为 P2P 连接可能已经建立但状态未及时更新
     const channelState = connection.getConnectState();
     const peerConnected = channelState.isPeerConnected;
+    const dataChannelConnected = channelState.isDataChannelConnected;
+    const channelReadyState = channelState.state;
 
     console.log('发送文件列表检查:', {
       channelState,
       peerConnected,
+      dataChannelConnected,
+      channelReadyState,
       fileListLength: fileList.length
     });
 
-    // 如果数据通道已打开或者 P2P 已连接，就可以发送文件列表
-    if (channelState.state === 'open' || peerConnected) {
-      console.log('发送文件列表:', fileList);
+    // 使用更宽松的条件检查连接状态
+    const isReadyToSend = channelReadyState === 'open' ||
+      dataChannelConnected ||
+      peerConnected ||
+      channelState.isConnected;
 
-      connection.sendMessage({
+    if (isReadyToSend) {
+      console.log('发送文件列表:', fileList.map(f => f.name));
+
+      const sendResult = connection.sendMessage({
         type: 'file-list',
         payload: fileList
       }, CHANNEL_NAME);
+
+      if (!sendResult) {
+        console.warn('文件列表发送失败，可能是数据通道未准备好');
+        // 不立即重试，让上层逻辑处理重试
+      }
     } else {
-      console.log('P2P连接未建立，等待连接后再发送文件列表');
+      console.log('连接未就绪，等待连接后再发送文件列表:', {
+        channelReadyState,
+        dataChannelConnected,
+        peerConnected,
+        isConnected: channelState.isConnected
+      });
     }
   }, [connection]);
 
   // 请求文件
   const requestFile = useCallback((fileId: string, fileName: string) => {
-    if (connection.getConnectState().state !== 'open') {
-      console.error('数据通道未准备就绪，无法请求文件');
+    const channelState = connection.getConnectState();
+    const isChannelOpen = channelState.state === 'open';
+    const isDataChannelConnected = channelState.isDataChannelConnected;
+    const isPeerConnected = channelState.isPeerConnected;
+    const isConnected = channelState.isConnected;
+
+    console.log('请求文件前检查连接状态:', {
+      fileName,
+      fileId,
+      isChannelOpen,
+      isDataChannelConnected,
+      isPeerConnected,
+      isConnected
+    });
+
+    // 使用更宽松的条件检查连接状态
+    const isReadyToRequest = isChannelOpen || isDataChannelConnected || isPeerConnected || isConnected;
+
+    if (!isReadyToRequest) {
+      console.error('数据通道未准备就绪，无法请求文件:', {
+        isChannelOpen,
+        isDataChannelConnected,
+        isPeerConnected,
+        isConnected
+      });
       return;
     }
 
-    console.log('请求文件:', fileName, fileId);
+    console.log('发送文件请求:', fileName, fileId);
 
-    connection.sendMessage({
+    const sendResult = connection.sendMessage({
       type: 'file-request',
       payload: { fileId, fileName }
     }, CHANNEL_NAME);
+
+    if (!sendResult) {
+      console.error('文件请求发送失败，可能是数据通道问题');
+      // 不立即重试，让上层逻辑处理重试
+    }
   }, [connection]);
 
   // 注册回调函数
@@ -658,6 +705,38 @@ export function useFileTransferBusiness(connection: IWebConnection) {
     return () => { fileListCallbacks.current.delete(callback); };
   }, []);
 
+  // 清除发送方数据
+  const clearSenderData = useCallback(() => {
+    console.log('[FileTransferBusiness] 清除发送方数据');
+
+    // 清除传输状态
+    transferStatus.current.clear();
+
+    // 清除待处理的块
+    pendingChunks.current.forEach(timeout => clearTimeout(timeout));
+    pendingChunks.current.clear();
+
+    // 清除块确认回调
+    chunkAckCallbacks.current.clear();
+
+    // 重置状态
+    updateState({
+      isTransferring: false,
+      progress: 0,
+      error: null
+    });
+  }, [updateState]);
+
+  // 设置断开连接回调
+  useEffect(() => {
+    connection.setOnDisconnectCallback(clearSenderData);
+
+    return () => {
+      // 清理回调
+      connection.setOnDisconnectCallback(() => { });
+    };
+  }, [connection, clearSenderData]);
+
   return {
     // 文件传输状态（包括连接状态）
     ...state,
@@ -668,6 +747,7 @@ export function useFileTransferBusiness(connection: IWebConnection) {
     sendFile,
     sendFileList,
     requestFile,
+    clearSenderData,
 
     // 回调注册
     onFileReceived,

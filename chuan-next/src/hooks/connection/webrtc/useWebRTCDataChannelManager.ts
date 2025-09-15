@@ -12,6 +12,8 @@ export function useWebRTCDataChannelManager(
   stateManager: IWebConnectStateManager
 ): WebRTCDataChannelManager & IRegisterEventHandler {
   const dcRef = useRef<RTCDataChannel | null>(null);
+  const stateManagerRef = useRef(stateManager);
+  stateManagerRef.current = stateManager;
 
   // 多通道消息处理器
   const messageHandlers = useRef<Map<string, MessageHandler>>(new Map());
@@ -41,16 +43,17 @@ export function useWebRTCDataChannelManager(
       });
       dcRef.current = dataChannel;
 
-      dataChannel.onopen = () => {
+      dataChannel.onopen = (event) => {
         console.log('[DataChannelManager] 数据通道已打开 (发送方)');
         // 确保所有连接状态都正确更新
-        stateManager.updateState({
+        stateManagerRef.current.updateState({
           isDataChannelConnected: true,
           isConnected: true,
           isPeerConnected: true,
           error: null,
           isConnecting: false,
-          canRetry: false
+          canRetry: false,
+          state: 'open'
         });
 
         // 如果是重新连接，触发数据同步
@@ -113,7 +116,7 @@ export function useWebRTCDataChannelManager(
 
         console.error(`[DataChannelManager] 数据通道详细错误 - 状态: ${dataChannel.readyState}, 消息: ${errorMessage}, 建议重试: ${shouldRetry}`);
 
-        stateManager.updateState({
+        stateManagerRef.current.updateState({
           error: errorMessage,
           isConnecting: false,
           isPeerConnected: false,  // 数据通道出错时，P2P连接肯定不可用
@@ -126,17 +129,18 @@ export function useWebRTCDataChannelManager(
         const dataChannel = event.channel;
         dcRef.current = dataChannel;
 
-        dataChannel.onopen = () => {
+        dataChannel.onopen = (event) => {
           console.log('[DataChannelManager] 数据通道已打开 (接收方)');
           // 确保所有连接状态都正确更新
-          stateManager.updateState({
+          stateManagerRef.current.updateState({
             isWebSocketConnected: true,
             isDataChannelConnected: true,
             isConnected: true,
             isPeerConnected: true,
             error: null,
             isConnecting: false,
-            canRetry: false
+            canRetry: false,
+            state: 'open'
           });
 
           // 如果是重新连接，触发数据同步
@@ -198,7 +202,7 @@ export function useWebRTCDataChannelManager(
 
           console.error(`[DataChannelManager] 数据通道详细错误 (接收方) - 状态: ${dataChannel.readyState}, 消息: ${errorMessage}, 建议重试: ${shouldRetry}`);
 
-          stateManager.updateState({
+          stateManagerRef.current.updateState({
             error: errorMessage,
             isConnecting: false,
             isPeerConnected: false,  // 数据通道出错时，P2P连接肯定不可用
@@ -313,12 +317,59 @@ export function useWebRTCDataChannelManager(
 
   // 获取数据通道状态
   const getChannelState = useCallback(() => {
-    return stateManager.getState();
+    return stateManagerRef.current.getState();
   }, []);
 
+  // 实时更新数据通道状态
   useEffect(() => {
-    stateManager.updateState({ state: dcRef.current?.readyState || 'closed' });
-  }, [dcRef.current?.readyState]);
+    const updateChannelState = () => {
+      const readyState = dcRef.current?.readyState || 'closed';
+      console.log('[DataChannelManager] 数据通道状态更新:', readyState);
+
+      // 更新状态存储中的数据通道状态
+      stateManagerRef.current.updateState({
+        state: readyState,
+        isDataChannelConnected: readyState === 'open'
+      });
+    };
+
+    // 立即更新一次
+    updateChannelState();
+
+    // 如果数据通道存在，设置状态变化监听
+    if (dcRef.current) {
+      const dc = dcRef.current;
+      const originalOnOpen = dc.onopen;
+      const originalOnClose = dc.onclose;
+      const originalOnError = dc.onerror;
+
+      dc.onopen = (event) => {
+        console.log('[DataChannelManager] 数据通道打开事件触发');
+        updateChannelState();
+        if (originalOnOpen) originalOnOpen.call(dc, event);
+      };
+
+      dc.onclose = (event) => {
+        console.log('[DataChannelManager] 数据通道关闭事件触发');
+        updateChannelState();
+        if (originalOnClose) originalOnClose.call(dc, event);
+      };
+
+      dc.onerror = (error) => {
+        console.log('[DataChannelManager] 数据通道错误事件触发');
+        updateChannelState();
+        if (originalOnError) originalOnError.call(dc, error);
+      };
+    }
+
+    // 清理函数
+    return () => {
+      if (dcRef.current) {
+        // 恢复原始事件处理器
+        // 注意：在实际应用中，可能需要更复杂的事件处理器管理
+      }
+    };
+  }, []);
 
   return {
     createDataChannel,

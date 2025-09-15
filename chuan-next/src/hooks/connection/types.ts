@@ -39,8 +39,6 @@ export interface IWebConnection extends IRegisterEventHandler, IGetConnectState 
   sendMessage: (message: IWebMessage, channel?: string) => boolean;
   sendData: (data: ArrayBuffer) => boolean;
 
-
-
   // 工具方法
   getConnectState: () => WebConnectState;
   isConnectedToRoom: (roomCode: string, role: Role) => boolean;
@@ -54,6 +52,9 @@ export interface IWebConnection extends IRegisterEventHandler, IGetConnectState 
   onTrack: (callback: (event: RTCTrackEvent) => void) => void;
   getPeerConnection: () => RTCPeerConnection | null;
   createOfferNow: () => Promise<boolean>;
+
+  // 断开连接回调
+  setOnDisconnectCallback: (callback: () => void) => void;
 }
 
 

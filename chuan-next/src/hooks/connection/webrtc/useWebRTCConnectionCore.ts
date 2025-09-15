@@ -12,21 +12,24 @@ import { Role, WebRTCDataChannelManager, WebRTCTrackManager } from '../types';
 export interface WebRTCConnectionCore {
   // 连接到房间
   connect: (roomCode: string, role: Role) => Promise<void>;
-  
+
   // 断开连接
   disconnect: (shouldNotifyDisconnect?: boolean) => void;
-  
+
   // 重试连接
   retry: () => Promise<void>;
-  
+
   // 获取 PeerConnection 实例
   getPeerConnection: () => RTCPeerConnection | null;
-  
+
   // 获取 WebSocket 实例
   getWebSocket: () => WebSocket | null;
-  
+
   // 获取当前房间信息
   getCurrentRoom: () => { code: string; role: Role } | null;
+
+  // 设置断开连接回调
+  setOnDisconnectCallback: (callback: () => void) => void;
 }
 
 /**
@@ -44,14 +47,17 @@ export function useWebRTCConnectionCore(
 
   // 当前连接的房间信息
   const currentRoom = useRef<{ code: string; role: Role } | null>(null);
-  
+
   // 用于跟踪是否是用户主动断开连接
   const isUserDisconnecting = useRef<boolean>(false);
+
+  // 断开连接回调
+  const onDisconnectCallback = useRef<(() => void) | null>(null);
 
   // 清理连接
   const cleanup = useCallback((shouldNotifyDisconnect: boolean = false) => {
     console.log('[ConnectionCore] 清理连接, 是否发送断开通知:', shouldNotifyDisconnect);
-    
+
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
@@ -65,8 +71,8 @@ export function useWebRTCConnectionCore(
     // 在清理 WebSocket 之前发送断开通知
     if (shouldNotifyDisconnect && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       try {
-        wsRef.current.send(JSON.stringify({ 
-          type: 'disconnection', 
+        wsRef.current.send(JSON.stringify({
+          type: 'disconnection',
           payload: { reason: '用户主动断开' }
         }));
         console.log('[ConnectionCore] 📤 清理时已通知对方断开连接');
@@ -87,17 +93,17 @@ export function useWebRTCConnectionCore(
   // 创建 PeerConnection 和相关设置
   const createPeerConnection = useCallback((ws: WebSocket, role: 'sender' | 'receiver', isReconnect: boolean = false) => {
     console.log('[ConnectionCore] 🔧 创建PeerConnection...', { role, isReconnect });
-    
+
     // 如果已经存在PeerConnection，先关闭它
     if (pcRef.current) {
       console.log('[ConnectionCore] 🔧 关闭已存在的PeerConnection');
       pcRef.current.close();
     }
-    
+
     // 获取用户配置的ICE服务器
     const iceServers = getIceServersConfig();
     console.log('[ConnectionCore] 🧊 使用ICE服务器配置:', iceServers);
-    
+
     // 创建 PeerConnection
     const pc = new RTCPeerConnection({
       iceServers: iceServers,
@@ -109,7 +115,7 @@ export function useWebRTCConnectionCore(
     pc.ontrack = (event) => {
       console.log('[ConnectionCore] 🎥 PeerConnection收到轨道:', event.track.kind, event.track.id, '状态:', event.track.readyState);
       console.log('[ConnectionCore] 关联的流数量:', event.streams.length);
-      
+
       // 这里不处理轨道，让业务逻辑的onTrack处理器处理
       // 业务逻辑会在useEffect中设置自己的处理器
       // 这样可以确保重新连接时轨道能够被正确处理
@@ -156,7 +162,11 @@ export function useWebRTCConnectionCore(
       switch (pc.connectionState) {
         case 'connecting':
           console.log('[ConnectionCore] 🔄 WebRTC正在连接中...');
-          stateManager.updateState({ isPeerConnected: false });
+          stateManager.updateState({
+            isPeerConnected: false,
+            isConnecting: true,
+            isConnected: false
+          });
           break;
         case 'connected':
           console.log('[ConnectionCore] 🎉 WebRTC P2P连接已完全建立，可以进行媒体传输');
@@ -165,10 +175,11 @@ export function useWebRTCConnectionCore(
             isWebSocketConnected: true,
             isConnected: true,
             isPeerConnected: true,
+            isConnecting: false,
             error: null,
             canRetry: false
           });
-          
+
           // 如果是重新连接，触发数据同步
           if (isReconnect) {
             console.log('[ConnectionCore] 🔄 检测到重新连接，触发数据同步');
@@ -188,15 +199,29 @@ export function useWebRTCConnectionCore(
           break;
         case 'failed':
           console.error('[ConnectionCore] ❌ WebRTC连接失败');
-          stateManager.updateState({ error: 'WebRTC连接失败，请检查网络设置或重试', isPeerConnected: false, canRetry: true });
+          stateManager.updateState({
+            error: 'WebRTC连接失败，请检查网络设置或重试',
+            isPeerConnected: false,
+            isConnecting: false,
+            isConnected: false,
+            canRetry: true
+          });
           break;
         case 'disconnected':
           console.log('[ConnectionCore] 🔌 WebRTC连接已断开');
-          stateManager.updateState({ isPeerConnected: false });
+          stateManager.updateState({
+            isPeerConnected: false,
+            isConnecting: false,
+            isConnected: false
+          });
           break;
         case 'closed':
           console.log('[ConnectionCore] 🚫 WebRTC连接已关闭');
-          stateManager.updateState({ isPeerConnected: false });
+          stateManager.updateState({
+            isPeerConnected: false,
+            isConnecting: false,
+            isConnected: false
+          });
           break;
       }
     };
@@ -230,7 +255,7 @@ export function useWebRTCConnectionCore(
     currentRoom.current = { code: roomCode, role };
     stateManager.setCurrentRoom({ code: roomCode, role });
     stateManager.updateState({ isConnecting: true, error: null });
-    
+
     // 重置主动断开标志
     isUserDisconnecting.current = false;
 
@@ -240,7 +265,7 @@ export function useWebRTCConnectionCore(
       if (!baseWsUrl) {
         throw new Error('WebSocket URL未配置');
       }
-      
+
       // 构建完整的WebSocket URL
       const wsUrl = `${baseWsUrl}/api/ws/webrtc?code=${roomCode}&role=${role}&channel=shared`;
       console.log('[ConnectionCore] 🌐 连接WebSocket:', wsUrl);
@@ -258,7 +283,7 @@ export function useWebRTCConnectionCore(
           isConnecting: false,  // WebSocket连接成功即表示初始连接完成
           isConnected: true     // 可以开始后续操作
         });
-        
+
         // 如果是重新连接且是发送方，检查是否有接收方在等待
         if (reconnectState.isReconnect && reconnectState.role === 'sender') {
           console.log('[ConnectionCore] 🔄 发送方重新连接，检查是否有接收方在等待');
@@ -283,21 +308,21 @@ export function useWebRTCConnectionCore(
                   isConnected: true,
                   isPeerConnected: true // 标记对方已加入，可以开始P2P
                 });
-                
+
                 // 如果是重新连接，先清理旧的PeerConnection
                 if (reconnectState.isReconnect && pcRef.current) {
                   console.log('[ConnectionCore] 🔄 重新连接：清理旧的PeerConnection');
                   pcRef.current.close();
                   pcRef.current = null;
                 }
-                
+
                 // 对方加入后，创建PeerConnection
                 const pc = createPeerConnection(ws, role, reconnectState.isReconnect);
-                
+
                 // 设置轨道管理器的引用
                 trackManager.setPeerConnection(pc);
                 trackManager.setWebSocket(ws);
-                
+
                 // 发送方创建offer建立基础P2P连接
                 try {
                   console.log('[ConnectionCore] 📡 创建基础P2P连接offer');
@@ -313,21 +338,21 @@ export function useWebRTCConnectionCore(
                   isConnected: true,
                   isPeerConnected: true // 标记对方已加入
                 });
-                
+
                 // 如果是重新连接，先清理旧的PeerConnection
                 if (reconnectState.isReconnect && pcRef.current) {
                   console.log('[ConnectionCore] 🔄 重新连接：清理旧的PeerConnection');
                   pcRef.current.close();
                   pcRef.current = null;
                 }
-                
+
                 // 对方加入后，立即创建PeerConnection，准备接收offer
                 const pc = createPeerConnection(ws, role, reconnectState.isReconnect);
-                
+
                 // 设置轨道管理器的引用
                 trackManager.setPeerConnection(pc);
                 trackManager.setWebSocket(ws);
-                
+
                 // 等待一小段时间确保PeerConnection完全初始化
                 setTimeout(() => {
                   console.log('[ConnectionCore] ✅ 接收方PeerConnection已准备就绪');
@@ -342,23 +367,23 @@ export function useWebRTCConnectionCore(
               if (!pcOffer) {
                 console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
                 pcOffer = createPeerConnection(ws, role, reconnectState.isReconnect);
-                
+
                 // 设置轨道管理器的引用
                 trackManager.setPeerConnection(pcOffer);
                 trackManager.setWebSocket(ws);
-                
+
                 // 等待一小段时间确保PeerConnection完全初始化
                 await new Promise(resolve => setTimeout(resolve, 100));
               }
-              
+
               if (pcOffer && pcOffer.signalingState === 'stable') {
                 await pcOffer.setRemoteDescription(new RTCSessionDescription(message.payload));
                 console.log('[ConnectionCore] ✅ 设置远程描述完成');
-                
+
                 const answer = await pcOffer.createAnswer();
                 await pcOffer.setLocalDescription(answer);
                 console.log('[ConnectionCore] ✅ 创建并设置answer完成');
-                
+
                 ws.send(JSON.stringify({ type: 'answer', payload: answer }));
                 console.log('[ConnectionCore] 📤 发送 answer');
               } else {
@@ -374,15 +399,15 @@ export function useWebRTCConnectionCore(
                 if (!pcAnswer) {
                   console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
                   pcAnswer = createPeerConnection(ws, role, reconnectState.isReconnect);
-                  
+
                   // 设置轨道管理器的引用
                   trackManager.setPeerConnection(pcAnswer);
                   trackManager.setWebSocket(ws);
-                  
+
                   // 等待一小段时间确保PeerConnection完全初始化
                   await new Promise(resolve => setTimeout(resolve, 100));
                 }
-                
+
                 if (pcAnswer) {
                   const signalingState = pcAnswer.signalingState;
                   // 如果状态是stable，可能是因为之前的offer已经完成，需要重新创建offer
@@ -392,7 +417,7 @@ export function useWebRTCConnectionCore(
                       await trackManager.createOffer(pcAnswer, ws);
                       // 等待一段时间让ICE候选收集完成
                       await new Promise(resolve => setTimeout(resolve, 500));
-                      
+
                       // 现在状态应该是have-local-offer，可以处理answer
                       if (pcAnswer.signalingState === 'have-local-offer') {
                         await pcAnswer.setRemoteDescription(new RTCSessionDescription(message.payload));
@@ -425,11 +450,11 @@ export function useWebRTCConnectionCore(
               if (!pcIce) {
                 console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
                 pcIce = createPeerConnection(ws, role, reconnectState.isReconnect);
-                
+
                 // 等待一小段时间确保PeerConnection完全初始化
                 await new Promise(resolve => setTimeout(resolve, 100));
               }
-              
+
               if (pcIce && message.payload) {
                 try {
                   // 即使远程描述未设置，也可以先缓存ICE候选
@@ -467,6 +492,11 @@ export function useWebRTCConnectionCore(
                 pcRef.current.close();
                 pcRef.current = null;
               }
+              // 调用断开连接回调，通知上层应用清除数据
+              if (onDisconnectCallback.current) {
+                console.log('[ConnectionCore] 📞 调用断开连接回调');
+                onDisconnectCallback.current();
+              }
               break;
 
             default:
@@ -486,14 +516,14 @@ export function useWebRTCConnectionCore(
       ws.onclose = (event) => {
         console.log('[ConnectionCore] 🔌 WebSocket 连接已关闭, 代码:', event.code, '原因:', event.reason);
         stateManager.updateState({ isWebSocketConnected: false });
-        
+
         // 检查是否是用户主动断开
         if (isUserDisconnecting.current) {
           console.log('[ConnectionCore] ✅ 用户主动断开，正常关闭');
           // 用户主动断开时不显示错误消息
           return;
         }
-        
+
         // 只有在非正常关闭且不是用户主动断开时才显示错误
         if (event.code !== 1000 && event.code !== 1001) { // 非正常关闭
           stateManager.updateState({ error: `WebSocket异常关闭 (${event.code}): ${event.reason || '连接意外断开'}`, isConnecting: false, canRetry: true });
@@ -513,13 +543,13 @@ export function useWebRTCConnectionCore(
   // 断开连接
   const disconnect = useCallback((shouldNotifyDisconnect: boolean = false) => {
     console.log('[ConnectionCore] 主动断开连接');
-    
+
     // 设置主动断开标志
     isUserDisconnecting.current = true;
-    
+
     // 清理连接并发送断开通知
     cleanup(shouldNotifyDisconnect);
-    
+
     // 主动断开时，将状态完全重置为初始状态（没有任何错误或消息）
     stateManager.resetToInitial();
     console.log('[ConnectionCore] ✅ 连接已断开并清理完成');
@@ -533,12 +563,12 @@ export function useWebRTCConnectionCore(
       stateManager.updateState({ error: '无法重试连接：缺少房间信息', canRetry: false });
       return;
     }
-    
+
     console.log('[ConnectionCore] 🔄 重试连接到房间:', room.code, room.role);
-    
+
     // 清理当前连接
     cleanup();
-    
+
     // 重新连接
     await connect(room.code, room.role);
   }, [cleanup, connect, stateManager]);
@@ -558,6 +588,11 @@ export function useWebRTCConnectionCore(
     return currentRoom.current;
   }, []);
 
+  // 设置断开连接回调
+  const setOnDisconnectCallback = useCallback((callback: () => void) => {
+    onDisconnectCallback.current = callback;
+  }, []);
+
   return {
     connect,
     disconnect,
@@ -565,5 +600,6 @@ export function useWebRTCConnectionCore(
     getPeerConnection,
     getWebSocket,
     getCurrentRoom,
+    setOnDisconnectCallback,
   };
 }

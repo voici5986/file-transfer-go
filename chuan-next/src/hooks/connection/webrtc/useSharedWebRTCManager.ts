@@ -72,6 +72,9 @@ export function useSharedWebRTCManagerImpl(): IWebConnection & IRegisterEventHan
     getPeerConnection: connectionCore.getPeerConnection,
     createOfferNow,
 
+    // 断开连接回调
+    setOnDisconnectCallback: connectionCore.setOnDisconnectCallback,
+
     // 当前房间信息
     currentRoom: connectionCore.getCurrentRoom(),
   };

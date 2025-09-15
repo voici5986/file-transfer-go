@@ -9,11 +9,14 @@ import { ConnectType, DataHandler, IWebConnection, IWebMessage, MessageHandler, 
 export function useWebSocketConnection(): IWebConnection {
   const wsRef = useRef<WebSocket | null>(null);
   const currentRoomRef = useRef<{ code: string; role: Role } | null>(null);
-  
+
   // 事件处理器存储
   const messageHandlers = useRef<Map<string, MessageHandler>>(new Map());
   const dataHandlers = useRef<Map<string, DataHandler>>(new Map());
-  
+
+  // 断开连接回调
+  const onDisconnectCallback = useRef<(() => void) | null>(null);
+
   // 连接状态
   const connectionState = useRef<WebConnectState>({
     isConnected: false,
@@ -52,9 +55,9 @@ export function useWebSocketConnection(): IWebConnection {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
       const wsUrl = `${protocol}//${host}/api/ws/${roomCode}?role=${role}`;
-      
+
       console.log('[WebSocket] 连接到:', wsUrl);
-      
+
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -97,6 +100,12 @@ export function useWebSocketConnection(): IWebConnection {
           error: event.wasClean ? null : 'WebSocket 连接意外断开',
           canRetry: !event.wasClean
         });
+
+        // 调用断开连接回调
+        if (onDisconnectCallback.current) {
+          console.log('[WebSocket] 调用断开连接回调');
+          onDisconnectCallback.current();
+        }
       };
 
     } catch (error) {
@@ -132,7 +141,7 @@ export function useWebSocketConnection(): IWebConnection {
       } else if (event.data instanceof ArrayBuffer) {
         // 二进制数据
         console.log('[WebSocket] 收到二进制数据:', event.data.byteLength, 'bytes');
-        
+
         // 优先发给文件传输处理器
         const fileHandler = dataHandlers.current.get('file-transfer');
         if (fileHandler) {
@@ -242,8 +251,8 @@ export function useWebSocketConnection(): IWebConnection {
   // 检查是否连接到指定房间
   const isConnectedToRoom = useCallback((roomCode: string, role: Role) => {
     return currentRoomRef.current?.code === roomCode &&
-           currentRoomRef.current?.role === role &&
-           connectionState.current.isConnected;
+      currentRoomRef.current?.role === role &&
+      connectionState.current.isConnected;
   }, []);
 
   // 媒体轨道方法（WebSocket 不支持，返回 null）
@@ -270,6 +279,11 @@ export function useWebSocketConnection(): IWebConnection {
     return false;
   }, []);
 
+  // 设置断开连接回调
+  const setOnDisconnectCallback = useCallback((callback: () => void) => {
+    onDisconnectCallback.current = callback;
+  }, []);
+
   // 清理连接
   useEffect(() => {
     return () => {
@@ -294,5 +308,6 @@ export function useWebSocketConnection(): IWebConnection {
     onTrack,
     getPeerConnection,
     createOfferNow,
+    setOnDisconnectCallback,
   };
 }

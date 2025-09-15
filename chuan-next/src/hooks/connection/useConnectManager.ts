@@ -163,6 +163,11 @@ export function useSharedWebRTCManager(): IWebConnection & IRegisterEventHandler
         return currentConnectionRef.current.createOfferNow();
     }, []);
 
+    // 设置断开连接回调
+    const setOnDisconnectCallback = useCallback((callback: () => void) => {
+        currentConnectionRef.current.setOnDisconnectCallback(callback);
+    }, []);
+
     // 扩展方法：切换连接类型
     const switchToWebSocket = useCallback(() => {
         switchConnectionType('websocket');
@@ -236,6 +241,7 @@ export function useSharedWebRTCManager(): IWebConnection & IRegisterEventHandler
         onTrack,
         getPeerConnection,
         createOfferNow,
+        setOnDisconnectCallback,
 
         // 扩展方法
         switchToWebSocket,

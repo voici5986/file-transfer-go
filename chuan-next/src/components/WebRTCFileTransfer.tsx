@@ -51,7 +51,8 @@ export const WebRTCFileTransfer: React.FC = () => {
     onFileReceived,
     onFileListReceived,
     onFileRequested,
-    onFileProgress
+    onFileProgress,
+    clearSenderData
   } = useFileTransferBusiness(stableConnection);
 
   // 使用自定义 hooks
@@ -75,7 +76,8 @@ export const WebRTCFileTransfer: React.FC = () => {
     clearFiles,
     resetFiles,
     updateFileStatus,
-    updateFileProgress
+    updateFileProgress,
+    clearSenderData: clearFileStateData
   } = useFileStateManager({
     mode,
     pickupCode,
@@ -413,20 +415,69 @@ export const WebRTCFileTransfer: React.FC = () => {
 
   // 监听P2P连接建立时的状态变化
   useEffect(() => {
-    if (connection.getConnectState().isPeerConnected && mode === 'send' && fileList.length > 0) {
-      console.log('P2P连接已建立，数据通道首次打开，初始化文件列表');
+    const connectState = connection.getConnectState();
+    const isPeerConnected = connectState.isPeerConnected;
+    const isDataChannelConnected = connectState.isDataChannelConnected;
+    const isChannelOpen = connectState.state === 'open';
+    const isConnected = connectState.isConnected;
+    
+    // 使用更宽松的条件检查连接状态
+    const isReady = isPeerConnected || isDataChannelConnected || isChannelOpen || isConnected;
+    
+    if (isReady && mode === 'send' && fileList.length > 0) {
+      console.log('连接已建立，初始化文件列表:', {
+        isPeerConnected,
+        isDataChannelConnected,
+        isChannelOpen,
+        isConnected,
+        fileListLength: fileList.length
+      });
       // 数据通道第一次打开时进行初始化
       syncFileListToReceiver(fileList, '数据通道初始化');
     }
-  }, [connection.getConnectState().isPeerConnected, mode, syncFileListToReceiver]);
+  }, [connection.getConnectState().isPeerConnected, connection.getConnectState().isDataChannelConnected, connection.getConnectState().state, connection.getConnectState().isConnected, mode, fileList.length, syncFileListToReceiver]);
 
   // 监听fileList大小变化并同步
   useEffect(() => {
-    if (connection.getConnectState().isPeerConnected && mode === 'send' && pickupCode) {
-      console.log('fileList大小变化，同步到接收方:', fileList.length);
+    const connectState = connection.getConnectState();
+    const isPeerConnected = connectState.isPeerConnected;
+    const isDataChannelConnected = connectState.isDataChannelConnected;
+    const isChannelOpen = connectState.state === 'open';
+    const isConnected = connectState.isConnected;
+    
+    // 使用更宽松的条件检查连接状态
+    const isReady = isPeerConnected || isDataChannelConnected || isChannelOpen || isConnected;
+    
+    if (isReady && mode === 'send' && pickupCode) {
+      console.log('fileList大小变化，同步到接收方:', {
+        fileListLength: fileList.length,
+        isPeerConnected,
+        isDataChannelConnected,
+        isChannelOpen,
+        isConnected
+      });
       syncFileListToReceiver(fileList, 'fileList大小变化');
     }
-  }, [fileList.length, connection.getConnectState().isPeerConnected, mode, pickupCode, syncFileListToReceiver]);
+  }, [fileList.length, connection.getConnectState().isPeerConnected, connection.getConnectState().isDataChannelConnected, connection.getConnectState().state, connection.getConnectState().isConnected, mode, pickupCode, syncFileListToReceiver]);
+
+  // 监听接收方离开房间事件
+  useEffect(() => {
+    const connectState = connection.getConnectState();
+    const isPeerConnected = connectState.isPeerConnected;
+    const isConnected = connectState.isConnected;
+    
+    // 当接收方离开房间时（P2P连接断开），清除发送方数据
+    if (mode === 'send' && pickupCode && !isPeerConnected && !isConnected) {
+      console.log('[WebRTCFileTransfer] 检测到接收方离开房间，清除发送方数据');
+      
+      // 清除文件传输业务逻辑中的数据
+      clearSenderData();
+      
+      // 清除文件状态管理器中的数据
+      clearFileStateData();
+      
+    }
+  }, [connection.getConnectState().isPeerConnected, connection.getConnectState().isConnected, mode, pickupCode, clearSenderData, clearFileStateData, showToast]);
 
   // 监听selectedFiles变化，同步更新fileList并发送给接收方
   useEffect(() => {
