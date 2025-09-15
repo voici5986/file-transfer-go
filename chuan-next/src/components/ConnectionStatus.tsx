@@ -1,6 +1,7 @@
-import React from 'react';
-import { cn } from '@/lib/utils';
+import { useReadConnectState } from '@/hooks/connection/state/useWebConnectStateManager';
+import { Role } from '@/hooks/connection/types';
 import { useWebRTCStore } from '@/hooks/index';
+import { cn } from '@/lib/utils';
 
 interface ConnectionStatusProps {
   // 房间信息 - 只需要这个基本信息
@@ -14,7 +15,10 @@ interface ConnectionStatusProps {
 }
 
 // 连接状态枚举
-const getConnectionStatus = (connection: { isWebSocketConnected?: boolean; isPeerConnected?: boolean; isConnecting?: boolean; error?: string | null }, currentRoom: { code: string; role: 'sender' | 'receiver' } | null) => {
+const getConnectionStatus = (currentRoom: { code: string; role: Role } | null) => {
+
+  const { getConnectState } = useReadConnectState(); // 确保状态管理器被初始化
+  const connection = getConnectState();
   const isWebSocketConnected = connection?.isWebSocketConnected || false;
   const isPeerConnected = connection?.isPeerConnected || false;
   const isConnecting = connection?.isConnecting || false;
@@ -162,7 +166,7 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
     return <span className={cn('text-sm text-slate-600', className)}>{getConnectionStatusText(connection)}</span>;
   }
   
-  const status = getConnectionStatus(connection, currentRoom ?? null);
+  const status = getConnectionStatus(currentRoom ?? null);
 
   if (compact) {
     return (

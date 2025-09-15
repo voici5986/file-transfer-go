@@ -1,37 +1,14 @@
 import { useCallback, useRef } from 'react';
-import { WebRTCStateManager } from './useWebRTCStateManager';
+import { IWebConnectStateManager } from '../state/useWebConnectStateManager';
+import { WebRTCTrackManager } from '../types';
 
-/**
- * WebRTC 媒体轨道管理器
- * 负责媒体轨道的添加和移除
- */
-export interface WebRTCTrackManager {
-  // 添加媒体轨道
-  addTrack: (track: MediaStreamTrack, stream: MediaStream) => RTCRtpSender | null;
-  
-  // 移除媒体轨道
-  removeTrack: (sender: RTCRtpSender) => void;
-  
-  // 设置轨道处理器
-  onTrack: (handler: (event: RTCTrackEvent) => void) => void;
-  
-  // 创建 Offer
-  createOffer: (pc: RTCPeerConnection, ws: WebSocket) => Promise<void>;
-  
-  // 立即创建offer（用于媒体轨道添加后的重新协商）
-  createOfferNow: (pc: RTCPeerConnection, ws: WebSocket) => Promise<boolean>;
-  
-  // 内部方法，供核心连接管理器调用
-  setPeerConnection: (pc: RTCPeerConnection | null) => void;
-  setWebSocket: (ws: WebSocket | null) => void;
-}
 
 /**
  * WebRTC 媒体轨道管理 Hook
  * 负责媒体轨道的添加和移除，处理轨道事件，提供 createOffer 功能
  */
 export function useWebRTCTrackManager(
-  stateManager: WebRTCStateManager
+  stateManager: IWebConnectStateManager
 ): WebRTCTrackManager {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -40,12 +17,12 @@ export function useWebRTCTrackManager(
   const createOffer = useCallback(async (pc: RTCPeerConnection, ws: WebSocket) => {
     try {
       console.log('[TrackManager] 🎬 开始创建offer，当前轨道数量:', pc.getSenders().length);
-      
+
       // 确保连接状态稳定
       if (pc.connectionState !== 'connecting' && pc.connectionState !== 'new') {
         console.warn('[TrackManager] ⚠️ PeerConnection状态异常:', pc.connectionState);
       }
-      
+
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,  // 改为true以支持音频接收
         offerToReceiveVideo: true,  // 改为true以支持视频接收
@@ -84,7 +61,7 @@ export function useWebRTCTrackManager(
             }
           }
         };
-        
+
         // 同时监听ICE候选事件，用于调试
         pc.onicecandidate = (event) => {
           if (event.candidate) {
@@ -107,7 +84,7 @@ export function useWebRTCTrackManager(
       console.error('[TrackManager] PeerConnection 不可用');
       return null;
     }
-    
+
     try {
       return pc.addTrack(track, stream);
     } catch (error) {
@@ -123,7 +100,7 @@ export function useWebRTCTrackManager(
       console.error('[TrackManager] PeerConnection 不可用');
       return;
     }
-    
+
     try {
       pc.removeTrack(sender);
     } catch (error) {
@@ -142,17 +119,17 @@ export function useWebRTCTrackManager(
         console.log('[TrackManager] WebSocket未连接，等待连接建立...');
         return;
       }
-      
+
       // 延迟设置，等待PeerConnection准备就绪
       let retryCount = 0;
       const maxRetries = 50; // 增加重试次数到50次，即5秒
-      
+
       const checkAndSetTrackHandler = () => {
         const currentPc = pcRef.current;
         if (currentPc) {
           console.log('[TrackManager] ✅ PeerConnection 已准备就绪，设置onTrack处理器');
           currentPc.ontrack = handler;
-          
+
           // 如果已经有远程轨道，立即触发处理
           const receivers = currentPc.getReceivers();
           console.log(`[TrackManager] 📡 当前有 ${receivers.length} 个接收器`);
@@ -177,10 +154,10 @@ export function useWebRTCTrackManager(
       checkAndSetTrackHandler();
       return;
     }
-    
+
     console.log('[TrackManager] ✅ 立即设置onTrack处理器');
     pc.ontrack = handler;
-    
+
     // 检查是否已有轨道
     const receivers = pc.getReceivers();
     console.log(`[TrackManager] 📡 当前有 ${receivers.length} 个接收器`);
@@ -197,7 +174,7 @@ export function useWebRTCTrackManager(
       console.error('[TrackManager] PeerConnection 或 WebSocket 不可用');
       return false;
     }
-    
+
     try {
       await createOffer(pc, ws);
       return true;

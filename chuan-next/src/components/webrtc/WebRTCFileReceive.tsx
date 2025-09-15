@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useCallback, useRef } from 'react';
+import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Download, FileText, Image, Video, Music, Archive, Clock, Zap } from 'lucide-react';
 import { useToast } from '@/components/ui/toast-simple';
-import { ConnectionStatus } from '@/components/ConnectionStatus';
-import { TransferProgressTracker, formatTransferSpeed, formatTime } from '@/lib/transfer-utils';
+import { useReadConnectState } from '@/hooks/connection/state/useWebConnectStateManager';
+import { TransferProgressTracker } from '@/lib/transfer-utils';
+import { Archive, Clock, Download, FileText, Image, Music, Video, Zap } from 'lucide-react';
+import React, { useCallback, useRef, useState } from 'react';
 
 interface FileInfo {
   id: string;
@@ -39,9 +40,6 @@ interface WebRTCFileReceiveProps {
   onJoinRoom: (code: string) => void;
   files: FileInfo[];
   onDownloadFile: (fileId: string) => void;
-  isConnected: boolean;
-  isConnecting: boolean;
-  isWebSocketConnected?: boolean;
   downloadedFiles?: Map<string, File>;
   error?: string | null;
   onReset?: () => void;
@@ -52,9 +50,6 @@ export function WebRTCFileReceive({
   onJoinRoom,
   files,
   onDownloadFile,
-  isConnected,
-  isConnecting,
-  isWebSocketConnected = false,
   downloadedFiles,
   error = null,
   onReset,
@@ -64,11 +59,15 @@ export function WebRTCFileReceive({
   const [isValidating, setIsValidating] = useState(false);
   const { showToast } = useToast();
   
+  
   // 用于跟踪传输进度的trackers
   const transferTrackers = useRef<Map<string, TransferProgressTracker>>(new Map());
 
   // 使用传入的取件码或本地状态的取件码
   const displayPickupCode = propPickupCode || pickupCode;
+
+  const { getConnectState } = useReadConnectState();
+
 
   // 验证取件码是否存在
   const validatePickupCode = async (code: string): Promise<boolean> => {
@@ -146,7 +145,7 @@ export function WebRTCFileReceive({
 
   // 当验证失败时重置输入状态
   React.useEffect(() => {
-    if (error && !isConnecting && !isConnected && !isValidating) {
+    if (error && !getConnectState().isConnecting && !getConnectState().isConnected && !isValidating) {
       // 延迟重置，确保用户能看到错误信息
       const timer = setTimeout(() => {
         console.log('重置取件码输入');
@@ -155,10 +154,10 @@ export function WebRTCFileReceive({
       
       return () => clearTimeout(timer);
     }
-  }, [error, isConnecting, isConnected, isValidating]);
+      }, [error, getConnectState, isValidating]);
 
   // 如果已经连接但没有文件，显示等待界面
-  if ((isConnected || isConnecting) && files.length === 0) {
+  if ((getConnectState().isConnected || getConnectState().isConnecting) && files.length === 0) {
     return (
       <div>
         {/* 功能标题和状态 */}
@@ -168,6 +167,7 @@ export function WebRTCFileReceive({
                 <Download className="w-5 h-5 text-white" />
               </div>
               <div>
+                {getConnectState().isWebSocketConnected}
                 <h3 className="text-lg font-semibold text-slate-800">文件接收中</h3>
                 <p className="text-sm text-slate-600">取件码: {displayPickupCode}</p>
               </div>
@@ -190,9 +190,9 @@ export function WebRTCFileReceive({
           {/* 连接状态指示器 */}
           <div className="flex items-center justify-center space-x-4 mb-6">
             <div className="flex items-center">
-              <div className={`w-3 h-3 rounded-full mr-2 ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-orange-500 animate-spin'}`}></div>
-              <span className={`text-sm font-medium ${isConnected ? 'text-emerald-600' : 'text-orange-600'}`}>
-                {isConnected ? '连接已建立' : '连接中...'}
+              <div className={`w-3 h-3 rounded-full mr-2 ${getConnectState().isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-orange-500 animate-spin'}`}></div>
+              <span className={`text-sm font-medium ${getConnectState().isConnected ? 'text-emerald-600' : 'text-orange-600'}`}>
+                {getConnectState().isConnected ? '连接已建立' : '连接中...'}
               </span>
             </div>
           </div>
@@ -326,7 +326,7 @@ export function WebRTCFileReceive({
                     </div>
                     <Button
                       onClick={() => onDownloadFile(file.id)}
-                      disabled={!isConnected || isDownloading}
+                      disabled={!getConnectState().isConnected || isDownloading}
                       className={`px-6 py-2 rounded-lg font-medium shadow-lg transition-all duration-200 hover:shadow-xl ${
                         hasDownloadedFile 
                           ? 'bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white'
@@ -399,7 +399,7 @@ export function WebRTCFileReceive({
               placeholder="请输入取件码"
               className="text-center text-2xl sm:text-3xl tracking-[0.3em] sm:tracking-[0.5em] font-mono h-12 sm:h-16 border-2 border-slate-200 rounded-xl focus:border-emerald-500 focus:ring-emerald-500 bg-white/80 backdrop-blur-sm pb-2 sm:pb-4"
               maxLength={6}
-              disabled={isValidating || isConnecting}
+              disabled={isValidating || getConnectState().isConnecting}
             />
             <div className="absolute inset-x-0 -bottom-4 sm:-bottom-6 flex justify-center space-x-1 sm:space-x-2">
               {[...Array(6)].map((_, i) => (
@@ -423,14 +423,14 @@ export function WebRTCFileReceive({
         <Button 
           type="submit" 
           className="w-full h-10 sm:h-12 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-base sm:text-lg font-medium rounded-xl shadow-lg transition-all duration-200 hover:shadow-xl hover:scale-105 disabled:opacity-50 disabled:scale-100" 
-          disabled={pickupCode.length !== 6 || isValidating || isConnecting}
+          disabled={pickupCode.length !== 6 || isValidating || getConnectState().isConnecting}
         >
           {isValidating ? (
             <div className="flex items-center space-x-2">
               <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
               <span>验证中...</span>
             </div>
-          ) : isConnecting ? (
+          ) : getConnectState().isConnecting ? (
             <div className="flex items-center space-x-2">
               <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
               <span>连接中...</span>

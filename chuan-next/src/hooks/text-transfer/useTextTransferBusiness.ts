@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import type { WebRTCConnection } from '../connection/useSharedWebRTCManager';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useWebConnectStateManager } from '../connection/state/useWebConnectStateManager';
+import { Role, type IWebConnection } from '../connection/types';
 
 // 文本传输状态
 interface TextTransferState {
@@ -21,7 +22,7 @@ const CHANNEL_NAME = 'text-transfer';
  * 文本传输业务层
  * 必须传入共享的 WebRTC 连接
  */
-export function useTextTransferBusiness(connection: WebRTCConnection) {
+export function useTextTransferBusiness(connection: IWebConnection) {
   const [state, setState] = useState<TextTransferState>({
     isConnecting: false,
     isConnected: false,
@@ -30,6 +31,8 @@ export function useTextTransferBusiness(connection: WebRTCConnection) {
     currentText: '',
     isTyping: false
   });
+
+const connectState = useWebConnectStateManager(); // 确保状态管理器被初始化
 
   // 回调引用
   const textSyncCallbackRef = useRef<TextSyncCallback | null>(null);
@@ -86,15 +89,15 @@ export function useTextTransferBusiness(connection: WebRTCConnection) {
   useEffect(() => {
     // 同步连接状态
     updateState({
-      isConnecting: connection.isConnecting,
-      isConnected: connection.isConnected,
-      isWebSocketConnected: connection.isWebSocketConnected,
-      connectionError: connection.error
+      isConnecting: connectState.getState().isConnecting,
+      isConnected: connectState.getState().isConnected,
+      isWebSocketConnected: connectState.getState().isWebSocketConnected,
+      connectionError: connectState.getState().error
     });
-  }, [connection.isConnecting, connection.isConnected, connection.isWebSocketConnected, connection.error, updateState]);
+  }, [connectState.getState, updateState]);
 
   // 连接
-  const connect = useCallback((roomCode: string, role: 'sender' | 'receiver') => {
+  const connect = useCallback((roomCode: string, role: Role) => {
     return connection.connect(roomCode, role);
   }, [connection]);
 
@@ -105,7 +108,7 @@ export function useTextTransferBusiness(connection: WebRTCConnection) {
 
   // 发送实时文本同步 (替代原来的 sendMessage)
   const sendTextSync = useCallback((text: string) => {
-    if (!connection || !connection.isPeerConnected) return;
+    if (!connectState.getState().isConnected || !connection.getConnectState().isPeerConnected) return;
     
     const message = {
       type: 'text-sync',
@@ -116,11 +119,11 @@ export function useTextTransferBusiness(connection: WebRTCConnection) {
     if (success) {
       console.log('发送实时文本同步:', text.length, '字符');
     }
-  }, [connection]);
+  }, [connectState.getState]);
 
   // 发送打字状态
   const sendTypingStatus = useCallback((isTyping: boolean) => {
-    if (!connection || !connection.isPeerConnected) return;
+    if (!connection || !connection.getConnectState().isPeerConnected) return;
     
     const message = {
       type: 'text-typing',
@@ -155,10 +158,10 @@ export function useTextTransferBusiness(connection: WebRTCConnection) {
 
   return {
     // 状态 - 直接从 connection 获取
-    isConnecting: connection.isConnecting,
-    isConnected: connection.isConnected,
-    isWebSocketConnected: connection.isWebSocketConnected,
-    connectionError: connection.error,
+    isConnecting: connection.getConnectState().isConnecting,
+    isConnected: connection.getConnectState().isConnected,
+    isWebSocketConnected: connection.getConnectState().isWebSocketConnected,
+    connectionError: connection.getConnectState().error,
     currentText: state.currentText,
     isTyping: state.isTyping,
     

@@ -1,10 +1,9 @@
 
-import { useRef, useCallback } from 'react';
 import { getWsUrl } from '@/lib/config';
-import { getIceServersConfig } from '../settings/useIceServersConfig';
-import { WebRTCStateManager } from './useWebRTCStateManager';
-import { WebRTCDataChannelManager, WebRTCMessage } from './useWebRTCDataChannelManager';
-import { WebRTCTrackManager } from './useWebRTCTrackManager';
+import { useCallback, useRef } from 'react';
+import { getIceServersConfig } from '../../settings/useIceServersConfig';
+import { IWebConnectStateManager } from '../state/useWebConnectStateManager';
+import { Role, WebRTCDataChannelManager, WebRTCTrackManager } from '../types';
 
 /**
  * WebRTC 核心连接管理器
@@ -12,7 +11,7 @@ import { WebRTCTrackManager } from './useWebRTCTrackManager';
  */
 export interface WebRTCConnectionCore {
   // 连接到房间
-  connect: (roomCode: string, role: 'sender' | 'receiver') => Promise<void>;
+  connect: (roomCode: string, role: Role) => Promise<void>;
   
   // 断开连接
   disconnect: (shouldNotifyDisconnect?: boolean) => void;
@@ -27,7 +26,7 @@ export interface WebRTCConnectionCore {
   getWebSocket: () => WebSocket | null;
   
   // 获取当前房间信息
-  getCurrentRoom: () => { code: string; role: 'sender' | 'receiver' } | null;
+  getCurrentRoom: () => { code: string; role: Role } | null;
 }
 
 /**
@@ -35,7 +34,7 @@ export interface WebRTCConnectionCore {
  * 负责基础的 WebRTC 连接管理，包括 WebSocket 连接、PeerConnection 创建和管理
  */
 export function useWebRTCConnectionCore(
-  stateManager: WebRTCStateManager,
+  stateManager: IWebConnectStateManager,
   dataChannelManager: WebRTCDataChannelManager,
   trackManager: WebRTCTrackManager
 ): WebRTCConnectionCore {
@@ -44,7 +43,7 @@ export function useWebRTCConnectionCore(
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 当前连接的房间信息
-  const currentRoom = useRef<{ code: string; role: 'sender' | 'receiver' } | null>(null);
+  const currentRoom = useRef<{ code: string; role: Role } | null>(null);
   
   // 用于跟踪是否是用户主动断开连接
   const isUserDisconnecting = useRef<boolean>(false);
@@ -210,7 +209,7 @@ export function useWebRTCConnectionCore(
   }, [stateManager, dataChannelManager]);
 
   // 连接到房间
-  const connect = useCallback(async (roomCode: string, role: 'sender' | 'receiver') => {
+  const connect = useCallback(async (roomCode: string, role: Role) => {
     console.log('[ConnectionCore] 🚀 开始连接到房间:', roomCode, role);
 
     // 如果正在连接中，避免重复连接

@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { useSharedWebRTCManager } from '../connection/useSharedWebRTCManager';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSharedWebRTCManager } from '../connection/useConnectManager';
 
 interface DesktopShareState {
   isSharing: boolean;
@@ -114,13 +114,13 @@ export function useDesktopShareBusiness() {
     console.log('[DesktopShare] 🎬 开始设置视频轨道发送...');
     
     // 检查P2P连接状态
-    if (!webRTC.isPeerConnected) {
+    if (!webRTC.getConnectState().isPeerConnected) {
       console.warn('[DesktopShare] ⚠️ P2P连接尚未完全建立，等待连接稳定...');
       // 等待连接稳定
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       // 再次检查
-      if (!webRTC.isPeerConnected) {
+      if (!webRTC.getConnectState().isPeerConnected) {
         console.error('[DesktopShare] ❌ P2P连接仍未建立，无法开始媒体传输');
         throw new Error('P2P连接尚未建立');
       }
@@ -274,7 +274,7 @@ export function useDesktopShareBusiness() {
   const startSharing = useCallback(async (): Promise<void> => {
     try {
       // 检查P2P连接状态（与switchDesktop保持一致）
-      if (!webRTC.isPeerConnected) {
+      if (!webRTC.getConnectState().isPeerConnected) {
         throw new Error('P2P连接未建立');
       }
 
@@ -320,7 +320,7 @@ export function useDesktopShareBusiness() {
   // 切换桌面共享（重新选择屏幕）
   const switchDesktop = useCallback(async (): Promise<void> => {
     try {
-      if (!webRTC.isPeerConnected) {
+      if (!webRTC.getConnectState().isPeerConnected) {
         throw new Error('P2P连接未建立');
       }
 
@@ -517,12 +517,12 @@ export function useDesktopShareBusiness() {
     remoteStream: state.remoteStream,
     error: state.error,
     isWaitingForPeer: state.isWaitingForPeer,
-    isConnected: webRTC.isConnected,
-    isConnecting: webRTC.isConnecting,
-    isWebSocketConnected: webRTC.isWebSocketConnected,
-    isPeerConnected: webRTC.isPeerConnected,
+    isConnected: webRTC.getConnectState().isConnected,
+    isConnecting: webRTC.getConnectState().isConnecting,
+    isWebSocketConnected: webRTC.getConnectState().isWebSocketConnected,
+    isPeerConnected: webRTC.getConnectState().isPeerConnected,
     // 新增：表示是否可以开始共享（WebSocket已连接且有房间代码）
-    canStartSharing: webRTC.isWebSocketConnected && !!state.connectionCode,
+    canStartSharing: webRTC.getConnectState().isWebSocketConnected && !!state.connectionCode,
 
     // 方法
     createRoom,        // 创建房间
@@ -535,7 +535,7 @@ export function useDesktopShareBusiness() {
     setRemoteVideoRef,
 
     // WebRTC连接状态
-    webRTCError: webRTC.error,
+    webRTCError: webRTC.getConnectState().error,
     
     // 暴露WebRTC连接对象
     webRTCConnection: webRTC,

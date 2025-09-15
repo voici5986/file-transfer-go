@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useSharedWebRTCManager, useConnectionState, useRoomConnection } from '@/hooks/connection';
-import { useFileTransferBusiness, useFileListSync, useFileStateManager } from '@/hooks/file-transfer';
-import { useURLHandler } from '@/hooks/ui';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast-simple';
-import { Upload, Download } from 'lucide-react';
-import { WebRTCFileUpload } from '@/components/webrtc/WebRTCFileUpload';
 import { WebRTCFileReceive } from '@/components/webrtc/WebRTCFileReceive';
+import { WebRTCFileUpload } from '@/components/webrtc/WebRTCFileUpload';
+import { useConnectionState, useRoomConnection, useSharedWebRTCManager } from '@/hooks/connection';
+import { useFileListSync, useFileStateManager, useFileTransferBusiness } from '@/hooks/file-transfer';
+import { useURLHandler } from '@/hooks/ui';
+import { Download, Upload } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface FileInfo {
   id: string;
@@ -35,7 +35,7 @@ export const WebRTCFileTransfer: React.FC = () => {
   
   // 创建共享连接
   const connection = useSharedWebRTCManager();
-  const stableConnection = useMemo(() => connection, [connection.isConnected, connection.isConnecting, connection.isWebSocketConnected, connection.error]);
+  const stableConnection = useMemo(() => connection, [connection.getConnectState().isConnected, connection.getConnectState().isConnecting, connection.getConnectState().isWebSocketConnected, connection.getConnectState().error]);
   
   // 使用共享连接创建业务层
   const {
@@ -60,8 +60,8 @@ export const WebRTCFileTransfer: React.FC = () => {
     mode,
     pickupCode,
     isConnected,
-    isPeerConnected: connection.isPeerConnected,
-    getChannelState: connection.getChannelState
+    isPeerConnected: connection.getConnectState().isPeerConnected,
+    getChannelState: () => connection.getConnectState().state
   });
 
   const {
@@ -80,7 +80,7 @@ export const WebRTCFileTransfer: React.FC = () => {
     mode,
     pickupCode,
     syncFileListToReceiver,
-    isPeerConnected: connection.isPeerConnected
+    isPeerConnected: connection.getConnectState().isPeerConnected
   });
 
   const { joinRoom: originalJoinRoom } = useRoomConnection({
@@ -409,24 +409,24 @@ export const WebRTCFileTransfer: React.FC = () => {
       selectedFilesCount: selectedFiles.length,
       fileListCount: fileList.length
     });
-  }, [isConnected, connection.isPeerConnected, isConnecting, isWebSocketConnected, pickupCode, mode, selectedFiles.length, fileList.length]);
+  }, [isConnected, connection.getConnectState().isPeerConnected, isConnecting, isWebSocketConnected, pickupCode, mode, selectedFiles.length, fileList.length]);
 
   // 监听P2P连接建立时的状态变化
   useEffect(() => {
-    if (connection.isPeerConnected && mode === 'send' && fileList.length > 0) {
+    if (connection.getConnectState().isPeerConnected && mode === 'send' && fileList.length > 0) {
       console.log('P2P连接已建立，数据通道首次打开，初始化文件列表');
       // 数据通道第一次打开时进行初始化
       syncFileListToReceiver(fileList, '数据通道初始化');
     }
-  }, [connection.isPeerConnected, mode, syncFileListToReceiver]);
+  }, [connection.getConnectState().isPeerConnected, mode, syncFileListToReceiver]);
 
   // 监听fileList大小变化并同步
   useEffect(() => {
-    if (connection.isPeerConnected && mode === 'send' && pickupCode) {
+    if (connection.getConnectState().isPeerConnected && mode === 'send' && pickupCode) {
       console.log('fileList大小变化，同步到接收方:', fileList.length);
       syncFileListToReceiver(fileList, 'fileList大小变化');
     }
-  }, [fileList.length, connection.isPeerConnected, mode, pickupCode, syncFileListToReceiver]);
+  }, [fileList.length, connection.getConnectState().isPeerConnected, mode, pickupCode, syncFileListToReceiver]);
 
   // 监听selectedFiles变化，同步更新fileList并发送给接收方
   useEffect(() => {
@@ -635,9 +635,7 @@ export const WebRTCFileTransfer: React.FC = () => {
             onJoinRoom={joinRoom}
             files={fileList}
             onDownloadFile={handleDownloadRequest}
-            isConnected={isConnected}
-            isConnecting={isConnecting}
-            isWebSocketConnected={isWebSocketConnected}
+   
             downloadedFiles={downloadedFiles}
             error={error}
             onReset={resetConnection}

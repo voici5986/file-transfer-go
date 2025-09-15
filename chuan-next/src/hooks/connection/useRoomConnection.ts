@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react';
 import { useToast } from '@/components/ui/toast-simple';
+import { useCallback, useState } from 'react';
+import { Role } from './types';
 
 interface UseRoomConnectionProps {
-  connect: (code: string, role: 'sender' | 'receiver') => void;
+  connect: (code: string, role: Role) => void;
   isConnecting: boolean;
   isConnected: boolean;
 }

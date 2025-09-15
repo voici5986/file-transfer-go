@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useURLHandler, FeatureType } from './useURLHandler';
-import { useWebRTCStore } from './webRTCStore';
+import { useCallback, useEffect, useState } from 'react';
+import { useSharedWebRTCManager } from '../connection';
+import { useWebRTCStore } from '../connection/state/webConnectStore';
 import { useConfirmDialog } from './useConfirmDialog';
-import { useSharedWebRTCManager } from '../connection/useSharedWebRTCManager';
+import { FeatureType, useURLHandler } from './useURLHandler';
 
 // Tab类型定义（包括非WebRTC功能）
 export type TabType = 'webrtc' | 'message' | 'desktop' | 'wechat' | 'settings';
