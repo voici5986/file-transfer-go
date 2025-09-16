@@ -1,3 +1,4 @@
+import { getWsUrl } from '@/lib/config';
 import { useCallback, useRef, useState } from 'react';
 import { useReadConnectState } from './state/useWebConnectStateManager';
 import { WebConnectState } from "./state/webConnectStore";
@@ -7,14 +8,21 @@ import { useWebSocketConnection } from './ws/useWebSocketConnection';
 
 
 /**
- * 连接管理器 - 代理 WebSocket 和 WebRTC 连接
+ * 连接管理器 - 统一管理 WebSocket 和 WebRTC 连接
  * 提供统一的连接接口，内部可以在不同传输方式之间切换
+ * 统一管理 WebSocket 连接，为 WebRTC 和 WebSocket 传输提供共享的 WebSocket 实例
  */
-export function useSharedWebRTCManager(): IWebConnection & IRegisterEventHandler & IGetConnectState {
+export function useConnectManager(): IWebConnection & IRegisterEventHandler & IGetConnectState {
     // 当前连接类型
     const [currentConnectType, setCurrentConnectType] = useState<ConnectType>('webrtc');
 
-    // 连接实例
+    // 统一的 WebSocket 连接引用
+    const wsRef = useRef<WebSocket | null>(null);
+
+    // 当前房间信息
+    const currentRoomRef = useRef<{ code: string; role: Role } | null>(null);
+
+    // 连接实例 - 初始化时不传入 WebSocket
     const wsConnection = useWebSocketConnection();
     const webrtcConnection = useSharedWebRTCManagerImpl();
 
@@ -36,7 +44,9 @@ export function useSharedWebRTCManager(): IWebConnection & IRegisterEventHandler
         state: 'closed',
         error: null,
         canRetry: false,
-        currentRoom: null
+        currentRoom: null,
+        stateMsg: null,
+        currentIsLocalNetWork: false
     });
 
     // 更新连接状态
@@ -45,6 +55,71 @@ export function useSharedWebRTCManager(): IWebConnection & IRegisterEventHandler
             ...connectionStateRef.current,
             ...updates
         };
+    }, []);
+
+    // 创建并管理 WebSocket 连接
+    const createWebSocketConnection = useCallback(async (roomCode: string, role: Role) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.log('[ConnectManager] 已存在 WebSocket 连接，先断开');
+            wsRef.current.close();
+        }
+
+        try {
+            // 构建 WebSocket URL
+            const baseWsUrl = getWsUrl();
+            if (!baseWsUrl) {
+                throw new Error('WebSocket URL未配置');
+            }
+
+            // 构建完整的WebSocket URL
+            const wsUrl = `${baseWsUrl}/api/ws/webrtc?code=${roomCode}&role=${role}&channel=shared`;
+            console.log('[ConnectManager] 创建 WebSocket 连接:', wsUrl);
+
+            const ws = new WebSocket(wsUrl);
+            // 设置二进制数据类型为 ArrayBuffer，避免默认的 Blob 类型
+            ws.binaryType = 'arraybuffer';
+            wsRef.current = ws;
+            currentRoomRef.current = { code: roomCode, role };
+
+            // WebSocket 事件处理
+            ws.onopen = () => {
+                console.log('[ConnectManager] WebSocket 连接成功');
+                updateConnectionState({
+                    isWebSocketConnected: true,
+                    error: null
+                });
+            };
+
+            ws.onerror = (error) => {
+                console.error('[ConnectManager] WebSocket 连接错误:', error);
+                updateConnectionState({
+                    isWebSocketConnected: false,
+                    error: 'WebSocket 连接失败'
+                });
+            };
+
+            ws.onclose = (event) => {
+                console.log('[ConnectManager] WebSocket 连接关闭:', event.code, event.reason);
+                updateConnectionState({
+                    isWebSocketConnected: false,
+                    error: event.wasClean ? null : 'WebSocket 连接意外断开'
+                });
+            };
+
+            return ws;
+        } catch (error) {
+            console.error('[ConnectManager] 创建 WebSocket 连接失败:', error);
+            updateConnectionState({
+                isWebSocketConnected: false,
+                error: '无法建立 WebSocket 连接'
+            });
+            throw error;
+        }
+    }, [updateConnectionState]);
+
+    // 获取 WebSocket 连接
+    const getWebSocketConnection = useCallback(() => {
+        return wsRef.current;
     }, []);
 
     // 切换连接类型
@@ -62,8 +137,6 @@ export function useSharedWebRTCManager(): IWebConnection & IRegisterEventHandler
 
         updateConnectionState({
             currentConnectType: type,
-            isConnected: false,
-            isConnecting: false,
             error: null
         });
     }, [currentConnectType, wsConnection, webrtcConnection, updateConnectionState]);
@@ -79,23 +152,41 @@ export function useSharedWebRTCManager(): IWebConnection & IRegisterEventHandler
         });
 
         try {
+            // 首先创建统一的 WebSocket 连接
+            const ws = await createWebSocketConnection(roomCode, role);
+
             if (currentConnectType === 'webrtc') {
-                // 使用当前选择的连接类型进行连接
+                // 将 WebSocket 注入到 WebRTC 连接中
+                webrtcConnection.injectWebSocket(ws);
                 currentConnectionRef.current = webrtcConnection;
                 await currentConnectionRef.current.connect(roomCode, role);
-
+            } else {
+                // WebSocket 连接也使用统一的 WebSocket 实例
+                wsConnection.injectWebSocket(ws);
+                currentConnectionRef.current = wsConnection;
+                await currentConnectionRef.current.connect(roomCode, role);
             }
 
         } catch (error) {
             console.error('[ConnectManager] 连接失败:', error);
-
+            updateConnectionState({
+                isConnecting: false,
+                error: error instanceof Error ? error.message : '连接失败'
+            });
         }
-    }, [currentConnectType]);
+    }, [currentConnectType, createWebSocketConnection, webrtcConnection, wsConnection, updateConnectionState]);
 
     // 断开连接
     const disconnect = useCallback(() => {
         console.log('[ConnectManager] 断开连接');
         currentConnectionRef.current.disconnect();
+
+        // 断开 WebSocket 连接
+        if (wsRef.current) {
+            wsRef.current.close(1000, '用户主动断开');
+            wsRef.current = null;
+        }
+        currentRoomRef.current = null;
 
         updateConnectionState({
             isConnected: false,

@@ -11,10 +11,12 @@ import { useWebRTCTrackManager } from './useWebRTCTrackManager';
  * 创建单一的 WebRTC 连接实例，供多个业务模块共享使用
  * 整合所有模块，提供统一的接口
  * 
- * webrtc 实现
+ * webrtc 实现 - 初始化时不需要 WebSocket，通过 injectWebSocket 动态注入
  * 
  */
-export function useSharedWebRTCManagerImpl(): IWebConnection & IRegisterEventHandler & IGetConnectState {
+export function useSharedWebRTCManagerImpl(): IWebConnection & IRegisterEventHandler & IGetConnectState & {
+  injectWebSocket: (ws: WebSocket) => void;
+} {
   // 创建各个管理器实例
   const stateManager = useWebConnectStateManager();
   const dataChannelManager = useWebRTCDataChannelManager(stateManager);
@@ -77,5 +79,8 @@ export function useSharedWebRTCManagerImpl(): IWebConnection & IRegisterEventHan
 
     // 当前房间信息
     currentRoom: connectionCore.getCurrentRoom(),
+
+    // WebSocket 注入方法
+    injectWebSocket: connectionCore.injectWebSocket,
   };
 }

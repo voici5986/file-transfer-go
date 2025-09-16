@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSharedWebRTCManager } from '../connection/useConnectManager';
+import { useConnectManager } from '../connection';
 
 interface DesktopShareState {
   isSharing: boolean;
@@ -11,7 +11,7 @@ interface DesktopShareState {
 }
 
 export function useDesktopShareBusiness() {
-  const webRTC = useSharedWebRTCManager();
+  const webRTC = useConnectManager();
   const [state, setState] = useState<DesktopShareState>({
     isSharing: false,
     isViewing: false,
@@ -46,14 +46,14 @@ export function useDesktopShareBusiness() {
     webRTC.onTrack((event: RTCTrackEvent) => {
       console.log('[DesktopShare] 🎥 收到远程轨道:', event.track.kind, event.track.id, '状态:', event.track.readyState);
       console.log('[DesktopShare] 远程流数量:', event.streams.length);
-      
+
       if (event.streams.length > 0) {
         const remoteStream = event.streams[0];
         console.log('[DesktopShare] 🎬 设置远程流，轨道数量:', remoteStream.getTracks().length);
         remoteStream.getTracks().forEach(track => {
           console.log('[DesktopShare] 远程轨道:', track.kind, track.id, '启用:', track.enabled, '状态:', track.readyState);
         });
-        
+
         // 确保轨道已启用
         remoteStream.getTracks().forEach(track => {
           if (!track.enabled) {
@@ -61,7 +61,7 @@ export function useDesktopShareBusiness() {
             track.enabled = true;
           }
         });
-        
+
         handleRemoteStream(remoteStream);
       } else {
         console.warn('[DesktopShare] ⚠️ 收到轨道但没有关联的流');
@@ -69,7 +69,7 @@ export function useDesktopShareBusiness() {
         try {
           const newStream = new MediaStream([event.track]);
           console.log('[DesktopShare] 🔄 从轨道创建新流:', newStream.id);
-          
+
           // 确保轨道已启用
           newStream.getTracks().forEach(track => {
             if (!track.enabled) {
@@ -77,7 +77,7 @@ export function useDesktopShareBusiness() {
               track.enabled = true;
             }
           });
-          
+
           handleRemoteStream(newStream);
         } catch (error) {
           console.error('[DesktopShare] ❌ 从轨道创建流失败:', error);
@@ -112,27 +112,27 @@ export function useDesktopShareBusiness() {
   // 设置视频轨道发送
   const setupVideoSending = useCallback(async (stream: MediaStream) => {
     console.log('[DesktopShare] 🎬 开始设置视频轨道发送...');
-    
+
     // 检查P2P连接状态
     if (!webRTC.getConnectState().isPeerConnected) {
       console.warn('[DesktopShare] ⚠️ P2P连接尚未完全建立，等待连接稳定...');
       // 等待连接稳定
       await new Promise(resolve => setTimeout(resolve, 1000));
-      
+
       // 再次检查
       if (!webRTC.getConnectState().isPeerConnected) {
         console.error('[DesktopShare] ❌ P2P连接仍未建立，无法开始媒体传输');
         throw new Error('P2P连接尚未建立');
       }
     }
-    
+
     // 移除之前的轨道（如果存在）
     if (currentSenderRef.current) {
       console.log('[DesktopShare] 🗑️ 移除之前的视频轨道');
       webRTC.removeTrack(currentSenderRef.current);
       currentSenderRef.current = null;
     }
-    
+
     // 添加新的视频轨道到PeerConnection
     const videoTrack = stream.getVideoTracks()[0];
     const audioTrack = stream.getAudioTracks()[0];
@@ -169,7 +169,7 @@ export function useDesktopShareBusiness() {
 
     // 轨道添加完成，现在需要重新协商以包含媒体轨道
     console.log('[DesktopShare] ✅ 桌面共享轨道添加完成，开始重新协商');
-    
+
     // 获取PeerConnection实例以便调试
     const pc = webRTC.getPeerConnection();
     if (pc) {
@@ -180,20 +180,20 @@ export function useDesktopShareBusiness() {
         senders: pc.getSenders().length
       });
     }
-    
+
     // 等待一小段时间确保轨道完全添加
     await new Promise(resolve => setTimeout(resolve, 500));
-    
+
     // 创建新的offer包含媒体轨道
     console.log('[DesktopShare] 📨 创建包含媒体轨道的新offer进行重新协商');
     const success = await webRTC.createOfferNow();
     if (success) {
       console.log('[DesktopShare] ✅ 媒体轨道重新协商成功');
-      
+
       // 等待重新协商完成
       console.log('[DesktopShare] ⏳ 等待重新协商完成...');
       await new Promise(resolve => setTimeout(resolve, 2000));
-      
+
       // 检查连接状态
       if (pc) {
         console.log('[DesktopShare] 🔍 重新协商后连接状态:', {
@@ -233,7 +233,7 @@ export function useDesktopShareBusiness() {
     });
 
     const data = await response.json();
-    
+
     if (!response.ok) {
       throw new Error(data.error || '创建房间失败');
     }
@@ -283,12 +283,12 @@ export function useDesktopShareBusiness() {
 
       // 获取桌面流
       const stream = await getDesktopStream();
-      
+
       // 停止之前的流（如果有）- 与switchDesktop保持一致
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => track.stop());
       }
-      
+
       localStreamRef.current = stream;
       console.log('[DesktopShare] ✅ 桌面流获取成功');
 
@@ -306,13 +306,13 @@ export function useDesktopShareBusiness() {
       const errorMessage = error instanceof Error ? error.message : '开始桌面共享失败';
       console.error('[DesktopShare] ❌ 开始共享失败:', error);
       updateState({ error: errorMessage, isSharing: false });
-      
+
       // 清理资源
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => track.stop());
         localStreamRef.current = null;
       }
-      
+
       throw error;
     }
   }, [webRTC, getDesktopStream, setupVideoSending, updateState]);
@@ -333,12 +333,12 @@ export function useDesktopShareBusiness() {
 
       // 获取新的桌面流
       const newStream = await getDesktopStream();
-      
+
       // 停止之前的流
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => track.stop());
       }
-      
+
       localStreamRef.current = newStream;
       console.log('[DesktopShare] ✅ 新桌面流获取成功');
 
@@ -454,7 +454,7 @@ export function useDesktopShareBusiness() {
 
       updateState({ isViewing: true });
       console.log('[DesktopShare] 👁️ 已进入桌面共享观看模式，等待接收流...');
-      
+
       // 设置一个超时检查，如果长时间没有收到流，输出警告
       setTimeout(() => {
         if (!state.remoteStream) {
@@ -536,7 +536,7 @@ export function useDesktopShareBusiness() {
 
     // WebRTC连接状态
     webRTCError: webRTC.getConnectState().error,
-    
+
     // 暴露WebRTC连接对象
     webRTCConnection: webRTC,
   };

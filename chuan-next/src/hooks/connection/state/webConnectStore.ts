@@ -9,7 +9,9 @@ export interface WebConnectState {
   isDataChannelConnected: boolean;
   isMediaStreamConnected: boolean;
   currentConnectType: 'webrtc' | 'websocket';
+  currentIsLocalNetWork: boolean; // 可选，表示当前是否在局域网内
   state: RTCDataChannelState;
+  stateMsg: string | null;
   error: string | null;
   canRetry: boolean;  // 新增：是否可以重试
   currentRoom: { code: string; role: Role } | null;
@@ -25,11 +27,13 @@ interface WebRTCStore extends WebConnectState {
 const initialState: WebConnectState = {
   isConnected: false,
   isConnecting: false,
+  currentIsLocalNetWork: false,
   isWebSocketConnected: false,
   isPeerConnected: false,
   error: null,
   canRetry: false, // 初始状态下不需要重试
   currentRoom: null,
+  stateMsg: null,
   isDataChannelConnected: false,
   isMediaStreamConnected: false,
   currentConnectType: 'webrtc',

@@ -76,10 +76,19 @@ type FileProgressCallback = (progressInfo: { fileId: string; fileName: string; p
 type FileListReceivedCallback = (fileList: FileInfo[]) => void;
 
 const CHANNEL_NAME = 'file-transfer';
-const CHUNK_SIZE = 256 * 1024; // 256KB
+const WEBRTC_CHUNK_SIZE = 256 * 1024; // 256KB for WebRTC
+const WEBSOCKET_CHUNK_SIZE = 3 * 1024 * 1024; // 3MB for WebSocket
 const MAX_RETRIES = 5; // 最大重试次数
 const RETRY_DELAY = 1000; // 重试延迟（毫秒）
 const ACK_TIMEOUT = 5000; // 确认超时（毫秒）
+
+/**
+ * 根据连接类型获取块大小
+ */
+function getChunkSize(connectType: string): number {
+  return connectType === 'websocket' ? WEBSOCKET_CHUNK_SIZE : WEBRTC_CHUNK_SIZE;
+}
+
 
 /**
  * 计算数据的CRC32校验和
@@ -98,19 +107,6 @@ function calculateChecksum(data: ArrayBuffer): string {
   return (crc ^ 0xFFFFFFFF).toString(16).padStart(8, '0');
 }
 
-/**
- * 生成简单的校验和（备用方案）
- */
-function simpleChecksum(data: ArrayBuffer): string {
-  const buffer = new Uint8Array(data);
-  let sum = 0;
-
-  for (let i = 0; i < Math.min(buffer.length, 1000); i++) {
-    sum += buffer[i];
-  }
-
-  return sum.toString(16);
-}
 
 /**
  * 文件传输业务层
@@ -174,7 +170,7 @@ export function useFileTransferBusiness(connection: IWebConnection) {
         });
 
         // 初始化接收进度跟踪
-        const totalChunks = Math.ceil(metadata.size / CHUNK_SIZE);
+        const totalChunks = Math.ceil(metadata.size / getChunkSize(connection.connectType));
         receiveProgress.current.set(metadata.id, {
           fileId: metadata.id,
           fileName: metadata.name,
@@ -453,9 +449,10 @@ export function useFileTransferBusiness(connection: IWebConnection) {
     }
 
     const actualFileId = fileId || `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const chunkSize = getChunkSize(connection.connectType);
+    const totalChunks = Math.ceil(file.size / chunkSize);
 
-    console.log('开始安全发送文件:', file.name, '文件ID:', actualFileId, '总块数:', totalChunks);
+    console.log('开始安全发送文件:', file.name, '文件ID:', actualFileId, '总块数:', totalChunks, '块大小:', chunkSize);
 
     updateState({ isTransferring: true, progress: 0, error: null });
 
@@ -503,8 +500,8 @@ export function useFileTransferBusiness(connection: IWebConnection) {
             console.warn(`WebRTC 连接暂时断开，但数据通道正在连接，继续尝试发送文件块 ${chunkIndex}`);
           }
 
-          const start = chunkIndex * CHUNK_SIZE;
-          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const start = chunkIndex * chunkSize;
+          const end = Math.min(start + chunkSize, file.size);
           const chunk = file.slice(start, end);
           const arrayBuffer = await chunk.arrayBuffer();
           const checksum = calculateChecksum(arrayBuffer);
@@ -555,8 +552,8 @@ export function useFileTransferBusiness(connection: IWebConnection) {
 
         // 自适应流控：根据传输速度调整发送间隔
         if (status.averageSpeed > 0) {
-          const chunkSize = Math.min(CHUNK_SIZE, file.size - chunkIndex * CHUNK_SIZE);
-          const expectedTime = (chunkSize / 1024) / status.averageSpeed;
+          const currentChunkSize = Math.min(chunkSize, file.size - chunkIndex * chunkSize);
+          const expectedTime = (currentChunkSize / 1024) / status.averageSpeed;
           const actualTime = Date.now() - status.lastChunkTime;
           const delay = Math.max(0, expectedTime - actualTime);
 

@@ -53,7 +53,8 @@ export function useWebRTCDataChannelManager(
           error: null,
           isConnecting: false,
           canRetry: false,
-          state: 'open'
+          state: 'open',
+          stateMsg: "数据通道已打开"
         });
 
         // 如果是重新连接，触发数据同步

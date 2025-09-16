@@ -23,6 +23,7 @@ const getConnectionStatus = (currentRoom: { code: string; role: Role } | null) =
   const isPeerConnected = connection?.isPeerConnected || false;
   const isConnecting = connection?.isConnecting || false;
   const error = connection?.error || null;
+  const currentConnectType = connection?.currentConnectType || 'webrtc';
 
   if (error) {
     return {
@@ -58,12 +59,15 @@ const getConnectionStatus = (currentRoom: { code: string; role: Role } | null) =
     };
   }
 
-  if (isWebSocketConnected && !isPeerConnected) {
-    return {
-      type: 'room-ready' as const,
-      message: '房间已创建',
-      detail: '等待对方加入并建立P2P连接...',
-    };
+  if (isWebSocketConnected ) {
+    // 根据连接类型显示不同信息
+    if (currentConnectType === 'websocket') {
+      return {
+        type: 'connected' as const,
+        message: 'P2P链接失败,WS降级中',
+        detail: 'WebSocket传输模式已就绪',
+      };
+    }
   }
 
   if (isWebSocketConnected && isPeerConnected) {
@@ -89,6 +93,8 @@ const getStatusColor = (type: string) => {
     case 'connecting':
     case 'room-ready':
       return 'text-yellow-600';
+    case 'websocket-ready':
+      return 'text-orange-600';
     case 'error':
       return 'text-red-600';
     case 'disconnected':
@@ -110,6 +116,8 @@ const StatusIcon = ({ type, className = 'w-3 h-3' }: { type: string; className?:
       return (
         <div className={cn(iconClass, 'bg-yellow-500 rounded-full animate-pulse')} />
       );
+    case 'websocket-ready':
+      return <div className={cn(iconClass, 'bg-orange-500 rounded-full')} />;
     case 'error':
       return <div className={cn(iconClass, 'bg-red-500 rounded-full')} />;
     case 'disconnected':
@@ -120,11 +128,12 @@ const StatusIcon = ({ type, className = 'w-3 h-3' }: { type: string; className?:
 };
 
 // 获取连接状态文字描述
-const getConnectionStatusText = (connection: { isWebSocketConnected?: boolean; isPeerConnected?: boolean; isConnecting?: boolean; error?: string | null }) => {
+const getConnectionStatusText = (connection: { isWebSocketConnected?: boolean; isPeerConnected?: boolean; isConnecting?: boolean; error?: string | null; currentConnectType?: 'webrtc' | 'websocket' }) => {
   const isWebSocketConnected = connection?.isWebSocketConnected || false;
   const isPeerConnected = connection?.isPeerConnected || false;
   const isConnecting = connection?.isConnecting || false;
   const error = connection?.error || null;
+  const currentConnectType = connection?.currentConnectType || 'webrtc';
   
   const wsStatus = isWebSocketConnected ? 'WS已连接' : 'WS未连接';
   const rtcStatus = isPeerConnected ? 'RTC已连接' : 
@@ -142,6 +151,11 @@ const getConnectionStatusText = (connection: { isWebSocketConnected?: boolean; i
     return `${wsStatus} ${rtcStatus} - P2P连接成功`;
   }
   
+  // 如果WebSocket已连接但P2P未连接，且当前连接类型是websocket
+  if (isWebSocketConnected && !isPeerConnected && currentConnectType === 'websocket') {
+    return `${wsStatus} ${rtcStatus} - P2P链接失败,将使用WS进行传输`;
+  }
+  
   return `${wsStatus} ${rtcStatus}`;
 };
 
@@ -157,6 +171,7 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
     isPeerConnected: webrtcState.isPeerConnected,
     isConnecting: webrtcState.isConnecting,
     error: webrtcState.error,
+    currentConnectType: webrtcState.currentConnectType,
   };
   
   const isConnected = webrtcState.isWebSocketConnected && webrtcState.isPeerConnected;

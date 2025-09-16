@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast-simple';
 import { WebRTCFileReceive } from '@/components/webrtc/WebRTCFileReceive';
 import { WebRTCFileUpload } from '@/components/webrtc/WebRTCFileUpload';
-import { useConnectionState, useRoomConnection, useSharedWebRTCManager } from '@/hooks/connection';
+import { useConnectionState, useConnectManager, useRoomConnection } from '@/hooks/connection';
 import { useFileListSync, useFileStateManager, useFileTransferBusiness } from '@/hooks/file-transfer';
 import { useURLHandler } from '@/hooks/ui';
 import { Download, Upload } from 'lucide-react';
@@ -34,7 +34,7 @@ export const WebRTCFileTransfer: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // 创建共享连接
-  const connection = useSharedWebRTCManager();
+  const connection = useConnectManager();
   const stableConnection = useMemo(() => connection, [connection.getConnectState().isConnected, connection.getConnectState().isConnecting, connection.getConnectState().isWebSocketConnected, connection.getConnectState().error]);
   
   // 使用共享连接创建业务层
@@ -229,10 +229,6 @@ export const WebRTCFileTransfer: React.FC = () => {
         console.log('连接已断开，忽略进度更新:', progressInfo.fileName);
         return;
       }
-
-      console.log('=== 文件进度更新 ===');
-      console.log('文件:', progressInfo.fileName, 'ID:', progressInfo.fileId, '进度:', progressInfo.progress);
-      
       // 更新当前传输文件信息
       setCurrentTransferFile({
         fileId: progressInfo.fileId,

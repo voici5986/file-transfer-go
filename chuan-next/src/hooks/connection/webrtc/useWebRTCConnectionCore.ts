@@ -1,5 +1,4 @@
 
-import { getWsUrl } from '@/lib/config';
 import { useCallback, useRef } from 'react';
 import { getIceServersConfig } from '../../settings/useIceServersConfig';
 import { IWebConnectStateManager } from '../state/useWebConnectStateManager';
@@ -30,18 +29,24 @@ export interface WebRTCConnectionCore {
 
   // 设置断开连接回调
   setOnDisconnectCallback: (callback: () => void) => void;
+
+  // 动态注入 WebSocket 连接
+  injectWebSocket: (ws: WebSocket) => void;
 }
 
 /**
  * WebRTC 核心连接管理 Hook
  * 负责基础的 WebRTC 连接管理，包括 WebSocket 连接、PeerConnection 创建和管理
+ * 初始化时不需要 WebSocket，可以通过 injectWebSocket 动态注入
  */
 export function useWebRTCConnectionCore(
   stateManager: IWebConnectStateManager,
   dataChannelManager: WebRTCDataChannelManager,
   trackManager: WebRTCTrackManager
 ): WebRTCConnectionCore {
+  // WebSocket 连接引用，初始为空
   const wsRef = useRef<WebSocket | null>(null);
+  const isExternalWebSocket = useRef<boolean>(false);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -81,7 +86,9 @@ export function useWebRTCConnectionCore(
       }
     }
 
-    if (wsRef.current) {
+    // 如果是外部 WebSocket，不关闭连接，只是清理引用
+    // 外部 WebSocket 的生命周期由外部管理
+    if (!isExternalWebSocket.current && wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -260,275 +267,309 @@ export function useWebRTCConnectionCore(
     isUserDisconnecting.current = false;
 
     try {
-      // 连接 WebSocket - 使用动态URL
-      const baseWsUrl = getWsUrl();
-      if (!baseWsUrl) {
-        throw new Error('WebSocket URL未配置');
-      }
-
-      // 构建完整的WebSocket URL
-      const wsUrl = `${baseWsUrl}/api/ws/webrtc?code=${roomCode}&role=${role}&channel=shared`;
-      console.log('[ConnectionCore] 🌐 连接WebSocket:', wsUrl);
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
       // 保存重新连接状态，供后续使用
       const reconnectState = { isReconnect, role };
 
-      // WebSocket 事件处理
-      ws.onopen = () => {
-        console.log('[ConnectionCore] ✅ WebSocket 连接已建立，房间准备就绪');
+      // 必须使用注入的 WebSocket 连接
+      if (!wsRef.current) {
+        throw new Error('WebSocket 连接未注入，请先调用 injectWebSocket 方法');
+      }
+
+      const ws = wsRef.current;
+      console.log('[ConnectionCore] 使用注入的 WebSocket 连接，状态:', ws.readyState);
+
+      // 检查 WebSocket 是否已经连接
+      if (ws.readyState === WebSocket.OPEN) {
+        console.log('[ConnectionCore] WebSocket 已连接，房间准备就绪');
         stateManager.updateState({
           isWebSocketConnected: true,
           isConnecting: false,  // WebSocket连接成功即表示初始连接完成
           isConnected: true     // 可以开始后续操作
         });
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        // 如果 WebSocket 还在连接中，等待连接成功
+        console.log('[ConnectionCore] WebSocket 连接中，等待连接完成');
+        stateManager.updateState({ isConnecting: true, error: null });
 
-        // 如果是重新连接且是发送方，检查是否有接收方在等待
-        if (reconnectState.isReconnect && reconnectState.role === 'sender') {
-          console.log('[ConnectionCore] 🔄 发送方重新连接，检查是否有接收方在等待');
-          // 这里不需要立即创建PeerConnection，等待接收方加入的通知
-        }
-      };
+        // 设置 WebSocket 的事件处理
+        const originalOnOpen = ws.onopen;
+        ws.onopen = (event) => {
+          console.log('[ConnectionCore] ✅ WebSocket 连接已建立，房间准备就绪');
+          stateManager.updateState({
+            isWebSocketConnected: true,
+            isConnecting: false,  // WebSocket连接成功即表示初始连接完成
+            isConnected: true     // 可以开始后续操作
+          });
 
-      ws.onmessage = async (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          console.log('[ConnectionCore] 📨 收到信令消息:', message.type);
+          // 调用原始处理器
+          if (originalOnOpen) {
+            originalOnOpen.call(ws, event);
+          }
+        };
+      } else {
+        throw new Error('WebSocket 连接状态异常: ' + ws.readyState);
+      }
 
-          switch (message.type) {
-            case 'peer-joined':
-              // 对方加入房间的通知
-              console.log('[ConnectionCore] 👥 对方已加入房间，角色:', message.payload?.role);
-              if (role === 'sender' && message.payload?.role === 'receiver') {
-                console.log('[ConnectionCore] 🚀 接收方已连接，发送方开始建立P2P连接');
-                // 确保WebSocket连接状态正确更新
-                stateManager.updateState({
-                  isWebSocketConnected: true,
-                  isConnected: true,
-                  isPeerConnected: true // 标记对方已加入，可以开始P2P
-                });
+      // 设置 WebSocket 消息处理
+      if (ws) {
+        // 如果是外部 WebSocket，可能已经有事件处理器，我们需要保存它们
+        const originalOnMessage = ws.onmessage;
+        const originalOnError = ws.onerror;
+        const originalOnClose = ws.onclose;
 
-                // 如果是重新连接，先清理旧的PeerConnection
-                if (reconnectState.isReconnect && pcRef.current) {
-                  console.log('[ConnectionCore] 🔄 重新连接：清理旧的PeerConnection');
-                  pcRef.current.close();
-                  pcRef.current = null;
-                }
+        ws.onmessage = async (event: MessageEvent) => {
+          try {
+            const message = JSON.parse(event.data);
+            console.log('[ConnectionCore] 📨 收到信令消息:', message.type);
 
-                // 对方加入后，创建PeerConnection
-                const pc = createPeerConnection(ws, role, reconnectState.isReconnect);
+            switch (message.type) {
+              case 'peer-joined':
+                // 对方加入房间的通知
+                console.log('[ConnectionCore] 👥 对方已加入房间，角色:', message.payload?.role);
+                if (role === 'sender' && message.payload?.role === 'receiver') {
+                  console.log('[ConnectionCore] 🚀 接收方已连接，发送方开始建立P2P连接');
+                  // 确保WebSocket连接状态正确更新
+                  stateManager.updateState({
+                    isWebSocketConnected: true,
+                    isConnected: true,
+                    isPeerConnected: true // 标记对方已加入，可以开始P2P
+                  });
 
-                // 设置轨道管理器的引用
-                trackManager.setPeerConnection(pc);
-                trackManager.setWebSocket(ws);
+                  // 如果是重新连接，先清理旧的PeerConnection
+                  if (reconnectState.isReconnect && pcRef.current) {
+                    console.log('[ConnectionCore] 🔄 重新连接：清理旧的PeerConnection');
+                    pcRef.current.close();
+                    pcRef.current = null;
+                  }
 
-                // 发送方创建offer建立基础P2P连接
-                try {
-                  console.log('[ConnectionCore] 📡 创建基础P2P连接offer');
-                  await trackManager.createOffer(pc, ws);
-                } catch (error) {
-                  console.error('[ConnectionCore] 创建基础P2P连接失败:', error);
-                }
-              } else if (role === 'receiver' && message.payload?.role === 'sender') {
-                console.log('[ConnectionCore] 🚀 发送方已连接，接收方准备接收P2P连接');
-                // 确保WebSocket连接状态正确更新
-                stateManager.updateState({
-                  isWebSocketConnected: true,
-                  isConnected: true,
-                  isPeerConnected: true // 标记对方已加入
-                });
-
-                // 如果是重新连接，先清理旧的PeerConnection
-                if (reconnectState.isReconnect && pcRef.current) {
-                  console.log('[ConnectionCore] 🔄 重新连接：清理旧的PeerConnection');
-                  pcRef.current.close();
-                  pcRef.current = null;
-                }
-
-                // 对方加入后，立即创建PeerConnection，准备接收offer
-                const pc = createPeerConnection(ws, role, reconnectState.isReconnect);
-
-                // 设置轨道管理器的引用
-                trackManager.setPeerConnection(pc);
-                trackManager.setWebSocket(ws);
-
-                // 等待一小段时间确保PeerConnection完全初始化
-                setTimeout(() => {
-                  console.log('[ConnectionCore] ✅ 接收方PeerConnection已准备就绪');
-                }, 100);
-              }
-              break;
-
-            case 'offer':
-              console.log('[ConnectionCore] 📬 处理offer...');
-              // 如果PeerConnection不存在，先创建它
-              let pcOffer = pcRef.current;
-              if (!pcOffer) {
-                console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
-                pcOffer = createPeerConnection(ws, role, reconnectState.isReconnect);
-
-                // 设置轨道管理器的引用
-                trackManager.setPeerConnection(pcOffer);
-                trackManager.setWebSocket(ws);
-
-                // 等待一小段时间确保PeerConnection完全初始化
-                await new Promise(resolve => setTimeout(resolve, 100));
-              }
-
-              if (pcOffer && pcOffer.signalingState === 'stable') {
-                await pcOffer.setRemoteDescription(new RTCSessionDescription(message.payload));
-                console.log('[ConnectionCore] ✅ 设置远程描述完成');
-
-                const answer = await pcOffer.createAnswer();
-                await pcOffer.setLocalDescription(answer);
-                console.log('[ConnectionCore] ✅ 创建并设置answer完成');
-
-                ws.send(JSON.stringify({ type: 'answer', payload: answer }));
-                console.log('[ConnectionCore] 📤 发送 answer');
-              } else {
-                console.warn('[ConnectionCore] ⚠️ PeerConnection状态不是stable或不存在:', pcOffer?.signalingState);
-              }
-              break;
-
-            case 'answer':
-              console.log('[ConnectionCore] 📬 处理answer...');
-              let pcAnswer = pcRef.current;
-              try {
-                // 如果PeerConnection不存在，先创建它
-                if (!pcAnswer) {
-                  console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
-                  pcAnswer = createPeerConnection(ws, role, reconnectState.isReconnect);
+                  // 对方加入后，创建PeerConnection
+                  const pc = createPeerConnection(ws, role, reconnectState.isReconnect);
 
                   // 设置轨道管理器的引用
-                  trackManager.setPeerConnection(pcAnswer);
+                  trackManager.setPeerConnection(pc);
+                  trackManager.setWebSocket(ws);
+
+                  // 发送方创建offer建立基础P2P连接
+                  try {
+                    console.log('[ConnectionCore] 📡 创建基础P2P连接offer');
+                    await trackManager.createOffer(pc, ws);
+                  } catch (error) {
+                    console.error('[ConnectionCore] 创建基础P2P连接失败:', error);
+                  }
+                } else if (role === 'receiver' && message.payload?.role === 'sender') {
+                  console.log('[ConnectionCore] 🚀 发送方已连接，接收方准备接收P2P连接');
+                  // 确保WebSocket连接状态正确更新
+                  stateManager.updateState({
+                    isWebSocketConnected: true,
+                    isConnected: true,
+                    isPeerConnected: true // 标记对方已加入
+                  });
+
+                  // 如果是重新连接，先清理旧的PeerConnection
+                  if (reconnectState.isReconnect && pcRef.current) {
+                    console.log('[ConnectionCore] 🔄 重新连接：清理旧的PeerConnection');
+                    pcRef.current.close();
+                    pcRef.current = null;
+                  }
+
+                  // 对方加入后，立即创建PeerConnection，准备接收offer
+                  const pc = createPeerConnection(ws, role, reconnectState.isReconnect);
+
+                  // 设置轨道管理器的引用
+                  trackManager.setPeerConnection(pc);
+                  trackManager.setWebSocket(ws);
+
+                  // 等待一小段时间确保PeerConnection完全初始化
+                  setTimeout(() => {
+                    console.log('[ConnectionCore] ✅ 接收方PeerConnection已准备就绪');
+                  }, 100);
+                }
+                break;
+
+              case 'offer':
+                console.log('[ConnectionCore] 📬 处理offer...');
+                // 如果PeerConnection不存在，先创建它
+                let pcOffer = pcRef.current;
+                if (!pcOffer) {
+                  console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
+                  pcOffer = createPeerConnection(ws, role, reconnectState.isReconnect);
+
+                  // 设置轨道管理器的引用
+                  trackManager.setPeerConnection(pcOffer);
                   trackManager.setWebSocket(ws);
 
                   // 等待一小段时间确保PeerConnection完全初始化
                   await new Promise(resolve => setTimeout(resolve, 100));
                 }
 
-                if (pcAnswer) {
-                  const signalingState = pcAnswer.signalingState;
-                  // 如果状态是stable，可能是因为之前的offer已经完成，需要重新创建offer
-                  if (signalingState === 'stable') {
-                    console.log('[ConnectionCore] 🔄 PeerConnection状态为stable，重新创建offer');
-                    try {
-                      await trackManager.createOffer(pcAnswer, ws);
-                      // 等待一段时间让ICE候选收集完成
-                      await new Promise(resolve => setTimeout(resolve, 500));
+                if (pcOffer && pcOffer.signalingState === 'stable') {
+                  await pcOffer.setRemoteDescription(new RTCSessionDescription(message.payload));
+                  console.log('[ConnectionCore] ✅ 设置远程描述完成');
 
-                      // 现在状态应该是have-local-offer，可以处理answer
-                      if (pcAnswer.signalingState === 'have-local-offer') {
-                        await pcAnswer.setRemoteDescription(new RTCSessionDescription(message.payload));
-                        console.log('[ConnectionCore] ✅ answer 处理完成');
-                      } else {
-                        console.warn('[ConnectionCore] ⚠️ 重新创建offer后状态仍然不是have-local-offer:', pcAnswer.signalingState);
-                      }
-                    } catch (error) {
-                      console.error('[ConnectionCore] ❌ 重新创建offer失败:', error);
-                    }
-                  } else if (signalingState === 'have-local-offer') {
-                    await pcAnswer.setRemoteDescription(new RTCSessionDescription(message.payload));
-                    console.log('[ConnectionCore] ✅ answer 处理完成');
-                  } else {
-                    console.warn('[ConnectionCore] ⚠️ PeerConnection状态异常:', signalingState);
-                  }
+                  const answer = await pcOffer.createAnswer();
+                  await pcOffer.setLocalDescription(answer);
+                  console.log('[ConnectionCore] ✅ 创建并设置answer完成');
+
+                  ws.send(JSON.stringify({ type: 'answer', payload: answer }));
+                  console.log('[ConnectionCore] 📤 发送 answer');
+                } else {
+                  console.warn('[ConnectionCore] ⚠️ PeerConnection状态不是stable或不存在:', pcOffer?.signalingState);
                 }
-              } catch (error) {
-                console.error('[ConnectionCore] ❌ 处理answer失败:', error);
-                if (error instanceof Error && error.message.includes('Failed to set local answer sdp')) {
-                  console.warn('[ConnectionCore] ⚠️ Answer处理失败，可能是连接状态变化导致的');
-                  // 清理连接状态，让客户端重新连接
-                  stateManager.updateState({ error: 'WebRTC连接状态异常，请重新连接', isPeerConnected: false });
-                }
-              }
-              break;
+                break;
 
-            case 'ice-candidate':
-              let pcIce = pcRef.current;
-              if (!pcIce) {
-                console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
-                pcIce = createPeerConnection(ws, role, reconnectState.isReconnect);
-
-                // 等待一小段时间确保PeerConnection完全初始化
-                await new Promise(resolve => setTimeout(resolve, 100));
-              }
-
-              if (pcIce && message.payload) {
+              case 'answer':
+                console.log('[ConnectionCore] 📬 处理answer...');
+                let pcAnswer = pcRef.current;
                 try {
-                  // 即使远程描述未设置，也可以先缓存ICE候选
-                  if (pcIce.remoteDescription) {
-                    await pcIce.addIceCandidate(new RTCIceCandidate(message.payload));
-                    console.log('[ConnectionCore] ✅ 添加 ICE 候选成功');
-                  } else {
-                    console.log('[ConnectionCore] 📝 远程描述未设置，缓存ICE候选');
-                    // 可以在这里实现ICE候选缓存机制，等远程描述设置后再添加
+                  // 如果PeerConnection不存在，先创建它
+                  if (!pcAnswer) {
+                    console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
+                    pcAnswer = createPeerConnection(ws, role, reconnectState.isReconnect);
+
+                    // 设置轨道管理器的引用
+                    trackManager.setPeerConnection(pcAnswer);
+                    trackManager.setWebSocket(ws);
+
+                    // 等待一小段时间确保PeerConnection完全初始化
+                    await new Promise(resolve => setTimeout(resolve, 100));
                   }
-                } catch (err) {
-                  console.warn('[ConnectionCore] ⚠️ 添加 ICE 候选失败:', err);
+
+                  if (pcAnswer) {
+                    const signalingState = pcAnswer.signalingState;
+                    // 如果状态是stable，可能是因为之前的offer已经完成，需要重新创建offer
+                    if (signalingState === 'stable') {
+                      console.log('[ConnectionCore] 🔄 PeerConnection状态为stable，重新创建offer');
+                      try {
+                        await trackManager.createOffer(pcAnswer, ws);
+                        // 等待一段时间让ICE候选收集完成
+                        await new Promise(resolve => setTimeout(resolve, 500));
+
+                        // 现在状态应该是have-local-offer，可以处理answer
+                        if (pcAnswer.signalingState === 'have-local-offer') {
+                          await pcAnswer.setRemoteDescription(new RTCSessionDescription(message.payload));
+                          console.log('[ConnectionCore] ✅ answer 处理完成');
+                        } else {
+                          console.warn('[ConnectionCore] ⚠️ 重新创建offer后状态仍然不是have-local-offer:', pcAnswer.signalingState);
+                        }
+                      } catch (error) {
+                        console.error('[ConnectionCore] ❌ 重新创建offer失败:', error);
+                      }
+                    } else if (signalingState === 'have-local-offer') {
+                      await pcAnswer.setRemoteDescription(new RTCSessionDescription(message.payload));
+                      console.log('[ConnectionCore] ✅ answer 处理完成');
+                    } else {
+                      console.warn('[ConnectionCore] ⚠️ PeerConnection状态异常:', signalingState);
+                    }
+                  }
+                } catch (error) {
+                  console.error('[ConnectionCore] ❌ 处理answer失败:', error);
+                  if (error instanceof Error && error.message.includes('Failed to set local answer sdp')) {
+                    console.warn('[ConnectionCore] ⚠️ Answer处理失败，可能是连接状态变化导致的');
+                    // 清理连接状态，让客户端重新连接
+                    stateManager.updateState({ error: 'WebRTC连接状态异常，请重新连接', isPeerConnected: false });
+                  }
                 }
-              } else {
-                console.warn('[ConnectionCore] ⚠️ ICE候选无效或PeerConnection不存在');
-              }
-              break;
+                break;
 
-            case 'error':
-              console.error('[ConnectionCore] ❌ 信令服务器错误:', message.error);
-              stateManager.updateState({ error: message.error, isConnecting: false, canRetry: true });
-              break;
+              case 'ice-candidate':
+                let pcIce = pcRef.current;
+                if (!pcIce) {
+                  console.log('[ConnectionCore] 🔧 PeerConnection不存在，先创建它');
+                  pcIce = createPeerConnection(ws, role, reconnectState.isReconnect);
 
-            case 'disconnection':
-              console.log('[ConnectionCore] 🔌 对方主动断开连接');
-              // 对方断开连接的处理
-              stateManager.updateState({
-                isPeerConnected: false,
-                isConnected: false,  // 添加这个状态
-                error: '对方已离开房间',
-                canRetry: true
-              });
-              // 清理P2P连接但保持WebSocket连接，允许重新连接
-              if (pcRef.current) {
-                pcRef.current.close();
-                pcRef.current = null;
-              }
-              // 调用断开连接回调，通知上层应用清除数据
-              if (onDisconnectCallback.current) {
-                console.log('[ConnectionCore] 📞 调用断开连接回调');
-                onDisconnectCallback.current();
-              }
-              break;
+                  // 等待一小段时间确保PeerConnection完全初始化
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                }
 
-            default:
-              console.warn('[ConnectionCore] ⚠️ 未知消息类型:', message.type);
+                if (pcIce && message.payload) {
+                  try {
+                    // 即使远程描述未设置，也可以先缓存ICE候选
+                    if (pcIce.remoteDescription) {
+                      await pcIce.addIceCandidate(new RTCIceCandidate(message.payload));
+                      console.log('[ConnectionCore] ✅ 添加 ICE 候选成功');
+                    } else {
+                      console.log('[ConnectionCore] 📝 远程描述未设置，缓存ICE候选');
+                      // 可以在这里实现ICE候选缓存机制，等远程描述设置后再添加
+                    }
+                  } catch (err) {
+                    console.warn('[ConnectionCore] ⚠️ 添加 ICE 候选失败:', err);
+                  }
+                } else {
+                  console.warn('[ConnectionCore] ⚠️ ICE候选无效或PeerConnection不存在');
+                }
+                break;
+
+              case 'error':
+                const errorMessage = message.error || '信令服务器返回未知错误';
+                console.error('[ConnectionCore] ❌ 信令服务器错误:', errorMessage);
+                stateManager.updateState({ error: errorMessage, isConnecting: false, canRetry: true });
+                break;
+
+              case 'disconnection':
+                console.log('[ConnectionCore] 🔌 对方主动断开连接');
+                // 对方断开连接的处理
+                stateManager.updateState({
+                  isPeerConnected: false,
+                  isConnected: false,  // 添加这个状态
+                  error: '对方已离开房间',
+                  canRetry: true
+                });
+                // 清理P2P连接但保持WebSocket连接，允许重新连接
+                if (pcRef.current) {
+                  pcRef.current.close();
+                  pcRef.current = null;
+                }
+                // 调用断开连接回调，通知上层应用清除数据
+                if (onDisconnectCallback.current) {
+                  console.log('[ConnectionCore] 📞 调用断开连接回调');
+                  onDisconnectCallback.current();
+                }
+                break;
+
+              default:
+                console.warn('[ConnectionCore] ⚠️ 未知消息类型:', message.type);
+            }
+          } catch (error) {
+            console.error('[ConnectionCore] ❌ 处理信令消息失败:', error);
+            stateManager.updateState({ error: '信令处理失败: ' + error, isConnecting: false, canRetry: true });
           }
-        } catch (error) {
-          console.error('[ConnectionCore] ❌ 处理信令消息失败:', error);
-          stateManager.updateState({ error: '信令处理失败: ' + error, isConnecting: false, canRetry: true });
+        };
+
+        // 对于外部WebSocket，需要设置错误和关闭事件处理器
+        if (isExternalWebSocket.current) {
+          ws.onerror = (error: Event) => {
+            console.error('[ConnectionCore] ❌ WebSocket 错误:', error);
+            stateManager.updateState({ error: 'WebSocket连接失败', isConnecting: false, canRetry: true });
+
+            // 调用原始错误处理器
+            if (originalOnError) {
+              originalOnError.call(ws, error);
+            }
+          };
+
+          ws.onclose = (event: CloseEvent) => {
+            console.log('[ConnectionCore] 🔌 WebSocket 连接已关闭, 代码:', event.code, '原因:', event.reason);
+            stateManager.updateState({ isWebSocketConnected: false });
+
+            // 检查是否是用户主动断开
+            if (isUserDisconnecting.current) {
+              console.log('[ConnectionCore] ✅ 用户主动断开，正常关闭');
+              // 用户主动断开时不显示错误消息
+              return;
+            }
+
+            // 只有在非正常关闭且不是用户主动断开时才显示错误
+            if (event.code !== 1000 && event.code !== 1001) { // 非正常关闭
+              stateManager.updateState({ error: `WebSocket异常关闭 (${event.code}): ${event.reason || '连接意外断开'}`, isConnecting: false, canRetry: true });
+            }
+
+            // 调用原始关闭处理器
+            if (originalOnClose) {
+              originalOnClose.call(ws, event);
+            }
+          };
         }
-      };
-
-      ws.onerror = (error) => {
-        console.error('[ConnectionCore] ❌ WebSocket 错误:', error);
-        stateManager.updateState({ error: 'WebSocket连接失败', isConnecting: false, canRetry: true });
-      };
-
-      ws.onclose = (event) => {
-        console.log('[ConnectionCore] 🔌 WebSocket 连接已关闭, 代码:', event.code, '原因:', event.reason);
-        stateManager.updateState({ isWebSocketConnected: false });
-
-        // 检查是否是用户主动断开
-        if (isUserDisconnecting.current) {
-          console.log('[ConnectionCore] ✅ 用户主动断开，正常关闭');
-          // 用户主动断开时不显示错误消息
-          return;
-        }
-
-        // 只有在非正常关闭且不是用户主动断开时才显示错误
-        if (event.code !== 1000 && event.code !== 1001) { // 非正常关闭
-          stateManager.updateState({ error: `WebSocket异常关闭 (${event.code}): ${event.reason || '连接意外断开'}`, isConnecting: false, canRetry: true });
-        }
-      };
+      }
 
     } catch (error) {
       console.error('[ConnectionCore] 连接失败:', error);
@@ -593,6 +634,13 @@ export function useWebRTCConnectionCore(
     onDisconnectCallback.current = callback;
   }, []);
 
+  // 动态注入 WebSocket 连接
+  const injectWebSocket = useCallback((ws: WebSocket) => {
+    console.log('[ConnectionCore] 注入外部 WebSocket 连接');
+    wsRef.current = ws;
+    isExternalWebSocket.current = true;
+  }, []);
+
   return {
     connect,
     disconnect,
@@ -601,5 +649,6 @@ export function useWebRTCConnectionCore(
     getWebSocket,
     getCurrentRoom,
     setOnDisconnectCallback,
+    injectWebSocket,
   };
 }

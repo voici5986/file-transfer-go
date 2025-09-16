@@ -4,7 +4,7 @@ import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast-simple';
-import { useSharedWebRTCManager } from '@/hooks/connection';
+import { useConnectManager } from '@/hooks/connection';
 import { useFileTransferBusiness } from '@/hooks/file-transfer';
 import { useTextTransferBusiness } from '@/hooks/text-transfer';
 import { Download, Image, MessageSquare } from 'lucide-react';
@@ -37,7 +37,7 @@ export const WebRTCTextReceiver: React.FC<WebRTCTextReceiverProps> = ({
   const hasTriedAutoConnect = useRef(false);
 
   // 创建共享连接
-  const connection = useSharedWebRTCManager();
+  const connection = useConnectManager();
 
   const {getConnectState} = connection;
   

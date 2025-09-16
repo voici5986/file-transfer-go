@@ -93,7 +93,6 @@ export const useFileStateManager = ({
     const newStatus = progress >= 100 ? 'completed' as const : 'downloading' as const;
     setFileList(prev => prev.map(item => {
       if (item.id === fileId || item.name === fileName) {
-        console.log(`更新文件 ${item.name} 进度: ${item.progress} -> ${progress}${transferSpeed ? `, 速度: ${transferSpeed} B/s` : ''}`);
         return {
           ...item,
           progress,

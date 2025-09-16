@@ -4,7 +4,7 @@ import { ConnectionStatus } from '@/components/ConnectionStatus';
 import RoomInfoDisplay from '@/components/RoomInfoDisplay';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast-simple';
-import { useSharedWebRTCManager } from '@/hooks/connection';
+import { useConnectManager } from '@/hooks/connection';
 import { useFileTransferBusiness } from '@/hooks/file-transfer';
 import { useTextTransferBusiness } from '@/hooks/text-transfer';
 import { Image, MessageSquare, Send } from 'lucide-react';
@@ -31,7 +31,7 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 创建共享连接
-  const connection = useSharedWebRTCManager();
+  const connection = useConnectManager();
 
   const { getConnectState } = connection;
 

@@ -1,6 +1,6 @@
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { useSharedWebRTCManager } from '../connection';
+import { useConnectManager } from '../connection';
 import { useWebRTCStore } from '../connection/state/webConnectStore';
 import { useConfirmDialog } from './useConfirmDialog';
 import { FeatureType, useURLHandler } from './useURLHandler';
@@ -29,33 +29,33 @@ export const useTabNavigation = () => {
   const [activeTab, setActiveTab] = useState<TabType>('webrtc');
   const [hasInitialized, setHasInitialized] = useState(false);
   const { showConfirmDialog, dialogState, closeDialog } = useConfirmDialog();
-  
+
   // 获取WebRTC全局状态
-  const { 
-    isConnected, 
-    isConnecting, 
+  const {
+    isConnected,
+    isConnecting,
     isPeerConnected,
     currentRoom,
   } = useWebRTCStore();
 
   // 获取WebRTC连接管理器
-  const { disconnect: disconnectWebRTC } = useSharedWebRTCManager();
+  const { disconnect: disconnectWebRTC } = useConnectManager();
 
   // 创建一个通用的URL处理器（用于断开连接）
   const { hasActiveConnection } = useURLHandler({
     featureType: 'webrtc', // 默认值，实际使用时会被覆盖
-    onModeChange: () => {},
+    onModeChange: () => { },
   });
 
   // 根据URL参数设置初始标签（仅首次加载时）
   useEffect(() => {
     if (!hasInitialized) {
       const urlType = searchParams.get('type');
-      
+
       console.log('=== HomePage URL处理 ===');
       console.log('URL type参数:', urlType);
       console.log('所有搜索参数:', Object.fromEntries(searchParams.entries()));
-      
+
       // 将旧的text类型重定向到message
       if (urlType === 'text') {
         console.log('检测到text类型，重定向到message标签页');
@@ -70,7 +70,7 @@ export const useTabNavigation = () => {
         console.log('没有有效的type参数，使用默认标签页：webrtc（文件传输）');
         // 保持默认的webrtc标签
       }
-      
+
       setHasInitialized(true);
     }
   }, [searchParams, hasInitialized]);
@@ -79,7 +79,7 @@ export const useTabNavigation = () => {
   const handleTabChange = useCallback(async (newTab: TabType) => {
     console.log('=== Tab切换 ===');
     console.log('当前tab:', activeTab, '目标tab:', newTab);
-    
+
     // 对于任何非WebRTC功能的tab（wechat、settings），如果有活跃连接需要确认
     if ((newTab === 'wechat' || newTab === 'settings') && hasActiveConnection()) {
       const currentTabName = TAB_NAMES[activeTab];
@@ -91,15 +91,15 @@ export const useTabNavigation = () => {
         cancelText: '取消',
         type: 'warning'
       });
-      
+
       if (!confirmed) {
         return false;
       }
-      
+
       // 断开连接并清除状态
       disconnectWebRTC();
       console.log(`已清除WebRTC连接状态，切换到${targetTabName}`);
-      
+
       setActiveTab(newTab);
       // 清除URL参数
       const newUrl = new URL(window.location.href);
@@ -122,7 +122,7 @@ export const useTabNavigation = () => {
     if (hasActiveConnection() && newTab !== activeTab && WEBRTC_FEATURES[newTab]) {
       const currentTabName = TAB_NAMES[activeTab];
       const targetTabName = TAB_NAMES[newTab];
-      
+
       const confirmed = await showConfirmDialog({
         title: '切换功能确认',
         message: `切换到${targetTabName}功能需要关闭当前的${currentTabName}连接，是否继续？`,
@@ -130,7 +130,7 @@ export const useTabNavigation = () => {
         cancelText: '取消',
         type: 'warning'
       });
-      
+
       if (!confirmed) {
         return false;
       }
@@ -142,7 +142,7 @@ export const useTabNavigation = () => {
 
     // 执行tab切换
     setActiveTab(newTab);
-    
+
     // 更新URL（对于WebRTC功能）
     if (WEBRTC_FEATURES[newTab]) {
       const params = new URLSearchParams();
@@ -156,7 +156,7 @@ export const useTabNavigation = () => {
       newUrl.search = '';
       window.history.pushState({}, '', newUrl.toString());
     }
-    
+
     return true;
   }, [activeTab, hasActiveConnection, disconnectWebRTC]);
 
