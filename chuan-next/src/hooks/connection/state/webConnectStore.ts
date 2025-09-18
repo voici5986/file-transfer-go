@@ -6,6 +6,7 @@ export interface WebConnectState {
   isConnecting: boolean;
   isWebSocketConnected: boolean;
   isPeerConnected: boolean;
+  isJoinedRoom: boolean;
   isDataChannelConnected: boolean;
   isMediaStreamConnected: boolean;
   currentConnectType: 'webrtc' | 'websocket';
@@ -29,6 +30,7 @@ const initialState: WebConnectState = {
   isConnecting: false,
   currentIsLocalNetWork: false,
   isWebSocketConnected: false,
+  isJoinedRoom: false,
   isPeerConnected: false,
   error: null,
   canRetry: false, // 初始状态下不需要重试
@@ -43,10 +45,10 @@ const initialState: WebConnectState = {
 export const useWebRTCStore = create<WebRTCStore>((set) => ({
   ...initialState,
 
-  updateState: (updates) => set((state) => ({
-    ...state,
-    ...updates,
-  })),
+  updateState: (updates) => set((state) => {
+    console.log('Updating WebRTC state:', updates);
+    return { ...state, ...updates };
+  }),
 
   setCurrentRoom: (room) => set((state) => ({
     ...state,

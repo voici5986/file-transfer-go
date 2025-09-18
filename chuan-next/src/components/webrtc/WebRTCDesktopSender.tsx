@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from 'react';
+import { ConnectionStatus } from '@/components/ConnectionStatus';
+import RoomInfoDisplay from '@/components/RoomInfoDisplay';
 import { Button } from '@/components/ui/button';
-import { Share, Monitor,  Play, Square, Repeat } from 'lucide-react';
 import { useToast } from '@/components/ui/toast-simple';
 import { useDesktopShareBusiness } from '@/hooks/desktop-share';
-import RoomInfoDisplay from '@/components/RoomInfoDisplay';
-import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { Monitor, Repeat, Share, Square } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface WebRTCDesktopSenderProps {
   className?: string;
@@ -20,6 +20,38 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
   // 使用桌面共享业务逻辑
   const desktopShare = useDesktopShareBusiness();
 
+  // 调试：监控localStream状态变化
+  useEffect(() => {
+    console.log('[DesktopShareSender] localStream状态变化:', {
+      hasLocalStream: !!desktopShare.localStream,
+      streamId: desktopShare.localStream?.id,
+      trackCount: desktopShare.localStream?.getTracks().length,
+      isSharing: desktopShare.isSharing,
+      canStartSharing: desktopShare.canStartSharing,
+    });
+  }, [desktopShare.localStream, desktopShare.isSharing, desktopShare.canStartSharing]);
+
+  // 保持本地视频元素的引用
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // 处理本地流变化，确保视频正确显示
+  useEffect(() => {
+    if (localVideoRef.current && desktopShare.localStream) {
+      console.log('[DesktopShareSender] 通过useEffect设置本地流到video元素');
+      localVideoRef.current.srcObject = desktopShare.localStream;
+      localVideoRef.current.muted = true;
+
+      localVideoRef.current.play().then(() => {
+        console.log('[DesktopShareSender] useEffect: 本地预览播放成功');
+      }).catch((e: Error) => {
+        console.warn('[DesktopShareSender] useEffect: 本地预览播放失败:', e);
+      });
+    } else if (localVideoRef.current && !desktopShare.localStream) {
+      console.log('[DesktopShareSender] 清除video元素的流');
+      localVideoRef.current.srcObject = null;
+    }
+  }, [desktopShare.localStream]);
+
   // 通知父组件连接状态变化
   useEffect(() => {
     if (onConnectionChange && desktopShare.webRTCConnection) {
@@ -27,24 +59,37 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
     }
   }, [onConnectionChange, desktopShare.isWebSocketConnected, desktopShare.isPeerConnected, desktopShare.isConnecting]);
 
-  // 监听连接状态变化，当P2P连接断开时重置共享状态
+  // 监听连接状态变化，当P2P连接断开时保持桌面共享状态
+  const prevPeerConnectedRef = useRef<boolean>(false);
+
   useEffect(() => {
-    // 如果正在共享但P2P连接断开，自动重置共享状态
-    if (desktopShare.isSharing && !desktopShare.isPeerConnected && desktopShare.connectionCode) {
-      console.log('[DesktopShareSender] 检测到P2P连接断开，自动重置共享状态');
-      
-      const resetState = async () => {
+    // 只有从连接状态变为断开状态时才处理
+    const wasPreviouslyConnected = prevPeerConnectedRef.current;
+    const isCurrentlyConnected = desktopShare.isPeerConnected;
+
+    // 更新ref
+    prevPeerConnectedRef.current = isCurrentlyConnected;
+
+    // 如果正在共享且从连接变为断开，保持桌面共享状态以便新用户加入
+    if (desktopShare.isSharing &&
+      wasPreviouslyConnected &&
+      !isCurrentlyConnected &&
+      desktopShare.connectionCode) {
+
+      console.log('[DesktopShareSender] 检测到P2P连接断开，保持桌面共享状态等待新用户');
+
+      const handleDisconnect = async () => {
         try {
-          await desktopShare.resetSharing();
-          console.log('[DesktopShareSender] 已自动重置共享状态');
+          await desktopShare.handlePeerDisconnect();
+          console.log('[DesktopShareSender] 已处理P2P断开，保持桌面共享状态');
         } catch (error) {
-          console.error('[DesktopShareSender] 自动重置共享状态失败:', error);
+          console.error('[DesktopShareSender] 处理P2P断开失败:', error);
         }
       };
-      
-      resetState();
+
+      handleDisconnect();
     }
-  }, [desktopShare.isSharing, desktopShare.isPeerConnected, desktopShare.connectionCode, desktopShare.resetSharing]);
+  }, [desktopShare.isSharing, desktopShare.isPeerConnected, desktopShare.connectionCode]); // 移除handlePeerDisconnect依赖
 
   // 复制房间代码
   const copyCode = useCallback(async (code: string) => {
@@ -57,15 +102,34 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
     }
   }, [showToast]);
 
-  // 创建房间
+  // 创建房间并开始桌面共享
+  const handleCreateRoomAndStart = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      console.log('[DesktopShareSender] 用户点击创建房间并开始共享');
+
+      const roomCode = await desktopShare.createRoomAndStartSharing();
+      console.log('[DesktopShareSender] 房间创建并桌面共享开始成功:', roomCode);
+
+      showToast(`房间创建成功！代码: ${roomCode}，桌面共享已开始`, 'success');
+    } catch (error) {
+      console.error('[DesktopShareSender] 创建房间并开始共享失败:', error);
+      const errorMessage = error instanceof Error ? error.message : '创建房间并开始共享失败';
+      showToast(errorMessage, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [desktopShare, showToast]);
+
+  // 创建房间（保留原方法）
   const handleCreateRoom = useCallback(async () => {
     try {
       setIsLoading(true);
       console.log('[DesktopShareSender] 用户点击创建房间');
-      
+
       const roomCode = await desktopShare.createRoom();
       console.log('[DesktopShareSender] 房间创建成功:', roomCode);
-      
+
       showToast(`房间创建成功！代码: ${roomCode}`, 'success');
     } catch (error) {
       console.error('[DesktopShareSender] 创建房间失败:', error);
@@ -81,19 +145,19 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
     try {
       setIsLoading(true);
       console.log('[DesktopShareSender] 用户点击开始桌面共享');
-      
+
       await desktopShare.startSharing();
       console.log('[DesktopShareSender] 桌面共享开始成功');
-      
+
       showToast('桌面共享已开始', 'success');
     } catch (error) {
       console.error('[DesktopShareSender] 开始桌面共享失败:', error);
       const errorMessage = error instanceof Error ? error.message : '开始桌面共享失败';
       showToast(errorMessage, 'error');
-      
+
       // 分享失败时重置状态，让用户重新选择桌面
       try {
-        await desktopShare.resetSharing();
+        // await desktopShare.resetSharing();
         console.log('[DesktopShareSender] 已重置共享状态，用户可以重新选择桌面');
       } catch (resetError) {
         console.error('[DesktopShareSender] 重置共享状态失败:', resetError);
@@ -108,16 +172,16 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
     try {
       setIsLoading(true);
       console.log('[DesktopShareSender] 用户点击切换桌面');
-      
+
       await desktopShare.switchDesktop();
       console.log('[DesktopShareSender] 桌面切换成功');
-      
+
       showToast('桌面切换成功', 'success');
     } catch (error) {
       console.error('[DesktopShareSender] 切换桌面失败:', error);
       const errorMessage = error instanceof Error ? error.message : '切换桌面失败';
       showToast(errorMessage, 'error');
-      
+
       // 切换桌面失败时重置状态，让用户重新选择桌面
       try {
         await desktopShare.resetSharing();
@@ -135,10 +199,10 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
     try {
       setIsLoading(true);
       console.log('[DesktopShareSender] 用户点击停止桌面共享');
-      
+
       await desktopShare.stopSharing();
       console.log('[DesktopShareSender] 桌面共享停止成功');
-      
+
       showToast('桌面共享已停止', 'success');
     } catch (error) {
       console.error('[DesktopShareSender] 停止桌面共享失败:', error);
@@ -166,8 +230,8 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                   <p className="text-sm text-slate-600">分享您的屏幕给其他人</p>
                 </div>
               </div>
-              
-              <ConnectionStatus 
+
+              <ConnectionStatus
                 currentRoom={desktopShare.connectionCode ? { code: desktopShare.connectionCode, role: 'sender' } : null}
               />
             </div>
@@ -178,9 +242,9 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
               </div>
               <h3 className="text-lg font-semibold text-slate-800 mb-4">创建桌面共享房间</h3>
               <p className="text-slate-600 mb-8">创建房间后将生成分享码，等待接收方加入后即可开始桌面共享</p>
-              
+
               <Button
-                onClick={handleCreateRoom}
+                onClick={handleCreateRoomAndStart}
                 disabled={isLoading || desktopShare.isConnecting}
                 className="px-8 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white text-lg font-medium rounded-xl shadow-lg"
               >
@@ -192,7 +256,7 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                 ) : (
                   <>
                     <Share className="w-5 h-5 mr-2" />
-                    创建桌面共享房间
+                    开始桌面共享
                   </>
                 )}
               </Button>
@@ -212,8 +276,8 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                   <p className="text-sm text-slate-600">房间代码: {desktopShare.connectionCode}</p>
                 </div>
               </div>
-              
-              <ConnectionStatus 
+
+              <ConnectionStatus
                 currentRoom={{ code: desktopShare.connectionCode, role: 'sender' }}
               />
             </div>
@@ -226,70 +290,66 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                     <Monitor className="w-5 h-5 mr-2" />
                     桌面共享控制
                   </h4>
+                  {/* 控制按钮 */}
                   {desktopShare.isSharing && (
-                    <div className="flex items-center space-x-1 bg-emerald-100 text-emerald-700 px-2 py-1 rounded-md">
-                      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                      <span className="font-medium">共享中</span>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        onClick={handleSwitchDesktop}
+                        disabled={isLoading}
+                        variant="outline"
+                        size="sm"
+                        className="text-slate-700 border-slate-300"
+                      >
+                        <Repeat className="w-4 h-4 mr-1" />
+                        切换桌面
+                      </Button>
+                      <Button
+                        onClick={handleStopSharing}
+                        disabled={isLoading}
+                        variant="destructive"
+                        size="sm"
+                        className="bg-red-500 hover:bg-red-600 text-white"
+                      >
+                        <Square className="w-4 h-4 mr-1" />
+                        停止共享
+                      </Button>
                     </div>
                   )}
                 </div>
-                
+
                 <div className="space-y-4">
-                  {!desktopShare.isSharing ? (
-                    <div className="space-y-3">
-                      <Button
-                        onClick={handleStartSharing}
-                        disabled={isLoading || !desktopShare.isPeerConnected}
-                        className={`w-full px-8 py-3 text-lg font-medium rounded-xl shadow-lg ${
-                          desktopShare.isPeerConnected 
-                            ? 'bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white' 
-                            : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                        }`}
-                      >
-                        <Play className="w-5 h-5 mr-2" />
-                        {isLoading ? '启动中...' : '选择并开始共享桌面'}
-                      </Button>
-                      
-                      {!desktopShare.isPeerConnected && (
-                        <div className="text-center">
-                          <p className="text-sm text-gray-500 mb-2">
-                            等待接收方加入房间建立P2P连接...
-                          </p>
-                          <div className="flex items-center justify-center space-x-2">
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-500"></div>
-                            <span className="text-sm text-purple-600">正在等待连接</span>
+                  {/* 本地预览区域（显示正在共享的内容） */}
+                  {desktopShare.isSharing && (
+                    <div className="bg-black rounded-xl overflow-hidden relative">
+                      {/* 共享状态指示器 */}
+                      <div className="absolute top-2 left-2 z-10">
+                        <div className="flex items-center space-x-1 bg-emerald-100 text-emerald-700 px-2 py-1 rounded-md">
+                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                          <span className="text-xs font-medium">共享中</span>
+                        </div>
+                      </div>
+
+                      {desktopShare.localStream ? (
+                        <video
+                          ref={localVideoRef}
+                          key={desktopShare.localStream.id} // 使用key确保重新渲染
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full aspect-video object-contain bg-black"
+                          style={{ minHeight: '300px' }}
+                        />
+                      ) : (
+                        <div className="w-full flex items-center justify-center text-white bg-black" style={{ minHeight: '300px' }}>
+                          <div className="text-center">
+                            <Monitor className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                            <p className="text-sm">正在加载屏幕流...</p>
                           </div>
                         </div>
                       )}
                     </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-center space-x-2 text-green-600 mb-4">
-                        <Play className="w-5 h-5" />
-                        <span className="font-semibold">桌面共享进行中</span>
-                      </div>
-                      <div className="flex justify-center space-x-3">
-                        <Button
-                          onClick={handleSwitchDesktop}
-                          disabled={isLoading}
-                          variant="outline"
-                          size="sm"
-                        >
-                          <Repeat className="w-4 h-4 mr-2" />
-                          {isLoading ? '切换中...' : '切换桌面'}
-                        </Button>
-                        <Button
-                          onClick={handleStopSharing}
-                          disabled={isLoading}
-                          variant="destructive"
-                          size="sm"
-                        >
-                          <Square className="w-4 h-4 mr-2" />
-                          {isLoading ? '停止中...' : '停止共享'}
-                        </Button>
-                      </div>
-                    </div>
                   )}
+
                 </div>
               </div>
             )}

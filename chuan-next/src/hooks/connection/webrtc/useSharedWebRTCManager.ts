@@ -27,9 +27,6 @@ export function useSharedWebRTCManagerImpl(): IWebConnection & IRegisterEventHan
     trackManager
   );
 
-  // 获取当前状态
-  const state = stateManager.getState();
-
   // 创建 createOfferNow 方法
   const createOfferNow = useCallback(async () => {
     const pc = connectionCore.getPeerConnection();
@@ -40,7 +37,7 @@ export function useSharedWebRTCManagerImpl(): IWebConnection & IRegisterEventHan
     }
 
     try {
-      return await trackManager.createOfferNow(pc, ws);
+      return await connectionCore.createOfferForMedia();
     } catch (error) {
       console.error('[SharedWebRTC] 创建 offer 失败:', error);
       return false;

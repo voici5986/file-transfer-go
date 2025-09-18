@@ -32,6 +32,9 @@ export interface WebRTCConnectionCore {
 
   // 动态注入 WebSocket 连接
   injectWebSocket: (ws: WebSocket) => void;
+
+  // 创建 Offer（供外部调用）
+  createOfferForMedia: () => Promise<boolean>;
 }
 
 /**
@@ -97,6 +100,68 @@ export function useWebRTCConnectionCore(
     isUserDisconnecting.current = false;  // 重置主动断开标志
   }, []);
 
+  // 创建 Offer（应该在 Core 层处理信令）
+  const createOffer = useCallback(async (pc: RTCPeerConnection, ws: WebSocket) => {
+    try {
+      console.log('[ConnectionCore] 🎬 开始创建offer，当前轨道数量:', pc.getSenders().length);
+
+      // 确保连接状态稳定
+      if (pc.connectionState !== 'connecting' && pc.connectionState !== 'new') {
+        console.warn('[ConnectionCore] ⚠️ PeerConnection状态异常:', pc.connectionState);
+      }
+
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+      });
+
+      console.log('[ConnectionCore] 📝 Offer创建成功，设置本地描述...');
+      await pc.setLocalDescription(offer);
+      console.log('[ConnectionCore] ✅ 本地描述设置完成');
+
+      // 等待ICE候选收集完成或超时
+      await new Promise<void>((resolve) => {
+        const iceTimeout = setTimeout(() => {
+          console.log('[ConnectionCore] ⏱️ ICE收集超时，继续发送offer');
+          resolve();
+        }, 3000); // 减少超时时间到3秒
+
+        // 如果ICE收集已经完成，立即发送
+        if (pc.iceGatheringState === 'complete') {
+          clearTimeout(iceTimeout);
+          resolve();
+        } else {
+          // 创建一个临时的监听器等待ICE收集完成
+          const originalHandler = pc.onicegatheringstatechange;
+          pc.onicegatheringstatechange = (event) => {
+            console.log('[ConnectionCore] 🧊 ICE收集状态变化:', pc.iceGatheringState);
+
+            // 调用原始处理器（如果存在）
+            if (originalHandler) {
+              originalHandler.call(pc, event);
+            }
+
+            if (pc.iceGatheringState === 'complete') {
+              clearTimeout(iceTimeout);
+              // 恢复原始处理器
+              pc.onicegatheringstatechange = originalHandler;
+              resolve();
+            }
+          };
+        }
+      });
+
+      // 发送offer
+      if (ws.readyState === WebSocket.OPEN && pc.localDescription) {
+        ws.send(JSON.stringify({ type: 'offer', payload: pc.localDescription }));
+        console.log('[ConnectionCore] 📤 发送 offer');
+      }
+    } catch (error) {
+      console.error('[ConnectionCore] ❌ 创建 offer 失败:', error);
+      stateManager.updateState({ error: '创建连接失败', isConnecting: false, canRetry: true });
+    }
+  }, [stateManager]);
+
   // 创建 PeerConnection 和相关设置
   const createPeerConnection = useCallback((ws: WebSocket, role: 'sender' | 'receiver', isReconnect: boolean = false) => {
     console.log('[ConnectionCore] 🔧 创建PeerConnection...', { role, isReconnect });
@@ -119,13 +184,11 @@ export function useWebRTCConnectionCore(
     pcRef.current = pc;
 
     // 设置轨道接收处理（对于接收方）
+    // 注意：这个处理器会在 TrackManager.onTrack() 中被业务逻辑覆盖
     pc.ontrack = (event) => {
       console.log('[ConnectionCore] 🎥 PeerConnection收到轨道:', event.track.kind, event.track.id, '状态:', event.track.readyState);
       console.log('[ConnectionCore] 关联的流数量:', event.streams.length);
-
-      // 这里不处理轨道，让业务逻辑的onTrack处理器处理
-      // 业务逻辑会在useEffect中设置自己的处理器
-      // 这样可以确保重新连接时轨道能够被正确处理
+      console.log('[ConnectionCore] ⚠️ 默认轨道处理器 - 业务层应该通过 TrackManager.onTrack() 设置自己的处理器');
     };
 
     // PeerConnection 事件处理
@@ -236,9 +299,14 @@ export function useWebRTCConnectionCore(
     // 创建数据通道
     dataChannelManager.createDataChannel(pc, role, isReconnect);
 
+    // 立即设置 TrackManager 的 PeerConnection 引用
+    trackManager.setPeerConnection(pc);
+    trackManager.setWebSocket(ws);
+
     console.log('[ConnectionCore] ✅ PeerConnection创建完成，角色:', role, '是否重新连接:', isReconnect);
+    console.log('[ConnectionCore] ✅ TrackManager 引用已设置');
     return pc;
-  }, [stateManager, dataChannelManager]);
+  }, [stateManager, dataChannelManager, trackManager]);
 
   // 连接到房间
   const connect = useCallback(async (roomCode: string, role: Role) => {
@@ -313,7 +381,6 @@ export function useWebRTCConnectionCore(
       // 设置 WebSocket 消息处理
       if (ws) {
         // 如果是外部 WebSocket，可能已经有事件处理器，我们需要保存它们
-        const originalOnMessage = ws.onmessage;
         const originalOnError = ws.onerror;
         const originalOnClose = ws.onclose;
 
@@ -332,7 +399,7 @@ export function useWebRTCConnectionCore(
                   stateManager.updateState({
                     isWebSocketConnected: true,
                     isConnected: true,
-                    isPeerConnected: true // 标记对方已加入，可以开始P2P
+                    isJoinedRoom: true,
                   });
 
                   // 如果是重新连接，先清理旧的PeerConnection
@@ -352,7 +419,7 @@ export function useWebRTCConnectionCore(
                   // 发送方创建offer建立基础P2P连接
                   try {
                     console.log('[ConnectionCore] 📡 创建基础P2P连接offer');
-                    await trackManager.createOffer(pc, ws);
+                    await createOffer(pc, ws);
                   } catch (error) {
                     console.error('[ConnectionCore] 创建基础P2P连接失败:', error);
                   }
@@ -362,7 +429,7 @@ export function useWebRTCConnectionCore(
                   stateManager.updateState({
                     isWebSocketConnected: true,
                     isConnected: true,
-                    isPeerConnected: true // 标记对方已加入
+                    isJoinedRoom: true,
                   });
 
                   // 如果是重新连接，先清理旧的PeerConnection
@@ -436,29 +503,23 @@ export function useWebRTCConnectionCore(
 
                   if (pcAnswer) {
                     const signalingState = pcAnswer.signalingState;
-                    // 如果状态是stable，可能是因为之前的offer已经完成，需要重新创建offer
-                    if (signalingState === 'stable') {
-                      console.log('[ConnectionCore] 🔄 PeerConnection状态为stable，重新创建offer');
-                      try {
-                        await trackManager.createOffer(pcAnswer, ws);
-                        // 等待一段时间让ICE候选收集完成
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                    console.log('[ConnectionCore] 当前信令状态:', signalingState, '角色:', role);
 
-                        // 现在状态应该是have-local-offer，可以处理answer
-                        if (pcAnswer.signalingState === 'have-local-offer') {
-                          await pcAnswer.setRemoteDescription(new RTCSessionDescription(message.payload));
-                          console.log('[ConnectionCore] ✅ answer 处理完成');
-                        } else {
-                          console.warn('[ConnectionCore] ⚠️ 重新创建offer后状态仍然不是have-local-offer:', pcAnswer.signalingState);
-                        }
+                    // 如果是发送方且状态是stable，说明已经有媒体轨道，应该发送新的offer而不是处理answer
+                    if (role === 'sender' && signalingState === 'stable') {
+                      console.log('[ConnectionCore] 🎬 发送方处于stable状态，发送包含媒体轨道的新offer');
+                      try {
+                        await createOffer(pcAnswer, ws);
+                        console.log('[ConnectionCore] ✅ 媒体offer发送完成');
                       } catch (error) {
-                        console.error('[ConnectionCore] ❌ 重新创建offer失败:', error);
+                        console.error('[ConnectionCore] ❌ 发送媒体offer失败:', error);
                       }
                     } else if (signalingState === 'have-local-offer') {
+                      // 正常的answer处理
                       await pcAnswer.setRemoteDescription(new RTCSessionDescription(message.payload));
                       console.log('[ConnectionCore] ✅ answer 处理完成');
                     } else {
-                      console.warn('[ConnectionCore] ⚠️ PeerConnection状态异常:', signalingState);
+                      console.warn('[ConnectionCore] ⚠️ PeerConnection状态异常:', signalingState, '跳过answer处理');
                     }
                   }
                 } catch (error) {
@@ -510,7 +571,9 @@ export function useWebRTCConnectionCore(
                 // 对方断开连接的处理
                 stateManager.updateState({
                   isPeerConnected: false,
+                  isDataChannelConnected: false,
                   isConnected: false,  // 添加这个状态
+                  isJoinedRoom: false,
                   error: '对方已离开房间',
                   canRetry: true
                 });
@@ -531,7 +594,7 @@ export function useWebRTCConnectionCore(
             }
           } catch (error) {
             console.error('[ConnectionCore] ❌ 处理信令消息失败:', error);
-            stateManager.updateState({ error: '信令处理失败: ' + error, isConnecting: false, canRetry: true });
+            // stateManager.updateState({ error: '信令处理失败: ' + error, isConnecting: false, canRetry: true });
           }
         };
 
@@ -641,6 +704,25 @@ export function useWebRTCConnectionCore(
     isExternalWebSocket.current = true;
   }, []);
 
+  // 供外部调用的创建 Offer 方法
+  const createOfferForMedia = useCallback(async () => {
+    const pc = pcRef.current;
+    const ws = wsRef.current;
+
+    if (!pc || !ws) {
+      console.error('[ConnectionCore] PeerConnection 或 WebSocket 不可用');
+      return false;
+    }
+
+    try {
+      await createOffer(pc, ws);
+      return true;
+    } catch (error) {
+      console.error('[ConnectionCore] 创建媒体 offer 失败:', error);
+      return false;
+    }
+  }, [createOffer]);
+
   return {
     connect,
     disconnect,
@@ -650,5 +732,6 @@ export function useWebRTCConnectionCore(
     getCurrentRoom,
     setOnDisconnectCallback,
     injectWebSocket,
+    createOfferForMedia,
   };
 }

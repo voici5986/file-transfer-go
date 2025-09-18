@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Monitor, Maximize, Minimize, Volume2, VolumeX, Settings, X, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Maximize, Minimize, Monitor, Play, Settings, Volume2, VolumeX, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface DesktopViewerProps {
   stream: MediaStream | null;
@@ -11,16 +11,16 @@ interface DesktopViewerProps {
   onDisconnect: () => void;
 }
 
-export default function DesktopViewer({ 
-  stream, 
-  isConnected, 
-  connectionCode, 
-  onDisconnect 
+export default function DesktopViewer({
+  stream,
+  isConnected,
+  connectionCode,
+  onDisconnect
 }: DesktopViewerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [showControls, setShowControls] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
@@ -44,15 +44,16 @@ export default function DesktopViewer({
           track.enabled = true;
         }
       });
-      
+
       videoRef.current.srcObject = stream;
-      console.log('[DesktopViewer] ✅ 视频元素已设置流');
-      
+      videoRef.current.muted = true; // 确保默认静音
+      console.log('[DesktopViewer] ✅ 视频元素已设置流并静音');
+
       // 重置状态
       hasAttemptedAutoplayRef.current = false;
       setNeedsUserInteraction(false);
       setIsPlaying(false);
-      
+
       // 添加事件监听器来调试视频加载
       const video = videoRef.current;
       const handleLoadStart = () => console.log('[DesktopViewer] 📹 视频开始加载');
@@ -112,14 +113,14 @@ export default function DesktopViewer({
           }
         }, 1000);
       };
-      
+
       video.addEventListener('loadstart', handleLoadStart);
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
       video.addEventListener('canplay', handleCanPlay);
       video.addEventListener('play', handlePlay);
       video.addEventListener('pause', handlePause);
       video.addEventListener('error', handleError);
-      
+
       return () => {
         video.removeEventListener('loadstart', handleLoadStart);
         video.removeEventListener('loadedmetadata', handleLoadedMetadata);
@@ -168,25 +169,25 @@ export default function DesktopViewer({
     const handleFullscreenChange = () => {
       const isCurrentlyFullscreen = !!document.fullscreenElement;
       setIsFullscreen(isCurrentlyFullscreen);
-      
+
       if (isCurrentlyFullscreen) {
         // 全屏时自动隐藏控制栏，鼠标移动时显示
         setShowControls(false);
       } else {
         // 退出全屏时显示控制栏
         setShowControls(true);
-        
+
         // 延迟检查视频状态，确保全屏切换完成
         setTimeout(() => {
           if (videoRef.current && stream) {
             console.log('[DesktopViewer] 🔄 退出全屏，检查视频状态');
-            
+
             // 确保视频流正确设置
             const currentSrcObject = videoRef.current.srcObject;
             if (!currentSrcObject || currentSrcObject !== stream) {
               videoRef.current.srcObject = stream;
             }
-            
+
             // 检查视频是否暂停
             if (videoRef.current.paused) {
               console.log('[DesktopViewer] ⏸️ 退出全屏后视频已暂停，显示播放按钮');
@@ -204,7 +205,7 @@ export default function DesktopViewer({
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    
+
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
@@ -214,12 +215,12 @@ export default function DesktopViewer({
   const handleMouseMove = useCallback(() => {
     if (isFullscreen) {
       setShowControls(true);
-      
+
       // 清除之前的定时器
       if (hideControlsTimeoutRef.current) {
         clearTimeout(hideControlsTimeoutRef.current);
       }
-      
+
       // 3秒后自动隐藏控制栏
       hideControlsTimeoutRef.current = setTimeout(() => {
         setShowControls(false);
@@ -254,7 +255,7 @@ export default function DesktopViewer({
     };
 
     document.addEventListener('keydown', handleKeyDown);
-    
+
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
@@ -393,7 +394,7 @@ export default function DesktopViewer({
         playsInline
         muted={isMuted}
         className={`w-full h-full object-contain ${isFullscreen ? 'cursor-none' : ''}`}
-        style={{ 
+        style={{
           aspectRatio: isFullscreen ? 'unset' : '16/9',
           minHeight: isFullscreen ? '100vh' : '400px'
         }}
@@ -425,9 +426,8 @@ export default function DesktopViewer({
 
       {/* 控制栏 */}
       <div
-        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-4 transition-all duration-300 ${
-          showControls || !isFullscreen ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
+        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-4 transition-all duration-300 ${showControls || !isFullscreen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
       >
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           {/* 左侧信息 */}
@@ -535,9 +535,8 @@ export default function DesktopViewer({
       {/* 网络状态指示器 */}
       <div className="absolute top-4 right-4 bg-black/60 text-white px-3 py-2 rounded-lg text-xs">
         <div className="flex items-center space-x-2">
-          <div className={`w-2 h-2 rounded-full ${
-            isConnected ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
-          }`}></div>
+          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
+            }`}></div>
           <span>{isConnected ? '已连接' : '连接中'}</span>
         </div>
       </div>

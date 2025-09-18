@@ -160,6 +160,7 @@ export function useWebSocketConnection(): IWebConnection & { injectWebSocket: (w
           updateState({
             isPeerConnected: false,
             isConnected: false,
+            isDataChannelConnected: false,
             error: '对方已离开房间',
             stateMsg: null,
             canRetry: true

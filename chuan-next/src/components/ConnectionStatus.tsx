@@ -24,22 +24,7 @@ const getConnectionStatus = (currentRoom: { code: string; role: Role } | null) =
   const isConnecting = connection?.isConnecting || false;
   const error = connection?.error || null;
   const currentConnectType = connection?.currentConnectType || 'webrtc';
-
-  if (error) {
-    return {
-      type: 'error' as const,
-      message: '连接失败',
-      detail: error,
-    };
-  }
-
-  if (isConnecting) {
-    return {
-      type: 'connecting' as const,
-      message: '正在连接',
-      detail: '建立房间连接中...',
-    };
-  }
+  const isJoinedRoom = connection?.isJoinedRoom || false;
 
   if (!currentRoom) {
     return {
@@ -49,35 +34,83 @@ const getConnectionStatus = (currentRoom: { code: string; role: Role } | null) =
     };
   }
 
-  // 如果有房间信息但WebSocket未连接，且不是正在连接状态
-  // 可能是状态更新的时序问题，显示连接中状态
-  if (!isWebSocketConnected && !isConnecting) {
+  if (error) {
     return {
-      type: 'connecting' as const,
-      message: '连接中',
-      detail: '正在建立WebSocket连接...',
+      type: 'error' as const,
+      message: '连接失败',
+      detail: error,
     };
   }
 
-  if (isWebSocketConnected ) {
-    // 根据连接类型显示不同信息
-    if (currentConnectType === 'websocket') {
+
+  if (currentConnectType === 'websocket') {
+    if (isWebSocketConnected && isJoinedRoom) {
       return {
         type: 'connected' as const,
         message: 'P2P链接失败,WS降级中',
         detail: 'WebSocket传输模式已就绪',
       };
     }
+    return {
+      type: 'room-ready' as const,
+      message: '房间已创建',
+      detail: '等待对方加入并建立WS连接...',
+    };
   }
 
-  if (isWebSocketConnected && isPeerConnected) {
+
+
+  if (isConnecting) {
+    return {
+      type: 'connecting' as const,
+      message: '正在连接',
+      detail: '建立房间连接中...',
+    };
+  }
+
+  // 如果有房间信息但WebSocket未连接，且不是正在连接状态
+  // 可能是状态更新的时序问题，显示连接中状态
+  if (isPeerConnected) {
     return {
       type: 'connected' as const,
       message: 'P2P连接成功',
       detail: '可以开始传输',
     };
   }
+  if (!isWebSocketConnected) {
+    return {
+      type: 'connecting' as const,
+      message: '连接中',
+      detail: '正在建立WebSocket连接...',
+    };
+  }
+  if (!isJoinedRoom) {
+    return {
+      type: 'room-ready' as const,
+      message: '房间已创建',
+      detail: '等待对方加入并建立P2P连接...',
+    };
+  }
+  if (isJoinedRoom) {
+    return {
+      type: 'room-ready' as const,
+      message: '对方已加入房间',
+      detail: '正在建立P2P连接...',
+    };
+  }
 
+
+
+  if (isJoinedRoom && !isPeerConnected) {
+    return {
+      type: 'room-ready' as const,
+      message: '房间已创建',
+      detail: '等待对方加入并建立P2P连接...',
+    };
+  }
+
+
+  console.log('Unknown connection state:', connection);
   return {
     type: 'unknown' as const,
     message: '状态未知',
@@ -134,37 +167,37 @@ const getConnectionStatusText = (connection: { isWebSocketConnected?: boolean; i
   const isConnecting = connection?.isConnecting || false;
   const error = connection?.error || null;
   const currentConnectType = connection?.currentConnectType || 'webrtc';
-  
+
   const wsStatus = isWebSocketConnected ? 'WS已连接' : 'WS未连接';
-  const rtcStatus = isPeerConnected ? 'RTC已连接' : 
+  const rtcStatus = isPeerConnected ? 'RTC已连接' :
     isWebSocketConnected ? 'RTC等待连接' : 'RTC未连接';
-  
+
   if (error) {
     return `${wsStatus} ${rtcStatus} - 连接失败`;
   }
-  
+
   if (isConnecting) {
     return `${wsStatus} ${rtcStatus} - 连接中`;
   }
-  
+
   if (isPeerConnected) {
     return `${wsStatus} ${rtcStatus} - P2P连接成功`;
   }
-  
+
   // 如果WebSocket已连接但P2P未连接，且当前连接类型是websocket
   if (isWebSocketConnected && !isPeerConnected && currentConnectType === 'websocket') {
     return `${wsStatus} ${rtcStatus} - P2P链接失败,将使用WS进行传输`;
   }
-  
+
   return `${wsStatus} ${rtcStatus}`;
 };
 
 export function ConnectionStatus(props: ConnectionStatusProps) {
   const { currentRoom, className, compact = false, inline = false } = props;
-  
+
   // 使用全局WebRTC状态
   const webrtcState = useWebRTCStore();
-  
+
   // 创建connection对象以兼容现有代码
   const connection = {
     isWebSocketConnected: webrtcState.isWebSocketConnected,
@@ -173,14 +206,14 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
     error: webrtcState.error,
     currentConnectType: webrtcState.currentConnectType,
   };
-  
+
   const isConnected = webrtcState.isWebSocketConnected && webrtcState.isPeerConnected;
-  
+
   // 如果是内联模式，只返回状态文字
   if (inline) {
     return <span className={cn('text-sm text-slate-600', className)}>{getConnectionStatusText(connection)}</span>;
   }
-  
+
   const status = getConnectionStatus(currentRoom ?? null);
 
   if (compact) {
@@ -188,21 +221,21 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
       <div className={cn('flex items-center', className)}>
         {/* 竖线分割 */}
         <div className="w-px h-12 bg-slate-200 mx-4"></div>
-        
+
         {/* 连接状态指示器 */}
         <div className="flex items-center gap-3 text-sm">
           <div className="flex items-center gap-1.5">
-            <StatusIcon 
-              type={connection.isWebSocketConnected ? 'connected' : 'disconnected'} 
-              className="w-2.5 h-2.5" 
+            <StatusIcon
+              type={connection.isWebSocketConnected ? 'connected' : 'disconnected'}
+              className="w-2.5 h-2.5"
             />
             <span className="text-sm text-slate-600 font-medium">WS</span>
           </div>
           <span className="text-slate-300 font-medium">|</span>
           <div className="flex items-center gap-1.5">
-            <StatusIcon 
-              type={connection.isPeerConnected ? 'connected' : 'disconnected'} 
-              className="w-2.5 h-2.5" 
+            <StatusIcon
+              type={connection.isPeerConnected ? 'connected' : 'disconnected'}
+              className="w-2.5 h-2.5"
             />
             <span className="text-sm text-slate-600 font-medium">RTC</span>
           </div>
@@ -226,9 +259,9 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
         <div className="flex items-center gap-4 text-xs">
           <div className="flex items-center gap-2">
             <span className="text-slate-500 font-medium">WS</span>
-            <StatusIcon 
-              type={connection.isWebSocketConnected ? 'connected' : 'disconnected'} 
-              className="w-2.5 h-2.5" 
+            <StatusIcon
+              type={connection.isWebSocketConnected ? 'connected' : 'disconnected'}
+              className="w-2.5 h-2.5"
             />
             <span className={cn(
               connection.isWebSocketConnected ? 'text-green-600' : 'text-slate-500'
@@ -236,14 +269,14 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
               {connection.isWebSocketConnected ? '已连接' : '未连接'}
             </span>
           </div>
-          
+
           <span className="text-slate-300">|</span>
-          
+
           <div className="flex items-center gap-2">
             <span className="text-slate-500 font-medium">RTC</span>
-            <StatusIcon 
-              type={connection.isPeerConnected ? 'connected' : 'disconnected'} 
-              className="w-2.5 h-2.5" 
+            <StatusIcon
+              type={connection.isPeerConnected ? 'connected' : 'disconnected'}
+              className="w-2.5 h-2.5"
             />
             <span className={cn(
               connection.isPeerConnected ? 'text-green-600' : 'text-slate-500'

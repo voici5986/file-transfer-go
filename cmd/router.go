@@ -11,8 +11,14 @@ import (
 	"github.com/go-chi/cors"
 )
 
+// RouterSetup 路由设置结果
+type RouterSetup struct {
+	Handler *handlers.Handler
+	Router  http.Handler
+}
+
 // setupRouter 设置路由和中间件
-func setupRouter() http.Handler {
+func setupRouter(config *Config) *RouterSetup {
 	// 初始化处理器
 	h := handlers.NewHandler()
 
@@ -22,12 +28,15 @@ func setupRouter() http.Handler {
 	setupMiddleware(router)
 
 	// 设置API路由
-	setupAPIRoutes(router, h)
+	setupAPIRoutes(router, h, config)
 
 	// 设置前端路由
 	router.Handle("/*", web.CreateFrontendHandler())
 
-	return router
+	return &RouterSetup{
+		Handler: h,
+		Router:  router,
+	}
 }
 
 // setupMiddleware 设置中间件
@@ -48,11 +57,20 @@ func setupMiddleware(r *chi.Mux) {
 }
 
 // setupAPIRoutes 设置API路由
-func setupAPIRoutes(r *chi.Mux, h *handlers.Handler) {
+func setupAPIRoutes(r *chi.Mux, h *handlers.Handler, config *Config) {
 	// WebRTC信令WebSocket路由
 	r.Get("/api/ws/webrtc", h.HandleWebRTCWebSocket)
 
 	// WebRTC房间API
 	r.Post("/api/create-room", h.CreateRoomHandler)
 	r.Get("/api/room-info", h.WebRTCRoomStatusHandler)
+
+	// TURN服务器API（仅在启用时可用）
+	if config.TurnConfig.Enabled {
+		r.Get("/api/turn/stats", h.TurnStatsHandler)
+		r.Get("/api/turn/config", h.TurnConfigHandler)
+	}
+
+	// 管理API
+	r.Get("/api/admin/status", h.AdminStatusHandler)
 }

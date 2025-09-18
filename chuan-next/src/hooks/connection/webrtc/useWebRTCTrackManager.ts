@@ -5,77 +5,40 @@ import { WebRTCTrackManager } from '../types';
 
 /**
  * WebRTC 媒体轨道管理 Hook
- * 负责媒体轨道的添加和移除，处理轨道事件，提供 createOffer 功能
+ * 负责媒体轨道的添加和移除，处理轨道事件
+ * 信令相关功能（如 createOffer）已移至 ConnectionCore
  */
 export function useWebRTCTrackManager(
   stateManager: IWebConnectStateManager
 ): WebRTCTrackManager {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const retryInProgressRef = useRef<boolean>(false); // 防止多个重试循环
 
-  // 创建 Offer
-  const createOffer = useCallback(async (pc: RTCPeerConnection, ws: WebSocket) => {
-    try {
-      console.log('[TrackManager] 🎬 开始创建offer，当前轨道数量:', pc.getSenders().length);
+  // 媒体协商：通知 Core 层需要重新创建 Offer
+  // 这个方法由业务层调用，用于添加媒体轨道后的重新协商
+  const requestOfferRenegotiation = useCallback(async () => {
+    const pc = pcRef.current;
+    const ws = wsRef.current;
 
-      // 确保连接状态稳定
-      if (pc.connectionState !== 'connecting' && pc.connectionState !== 'new') {
-        console.warn('[TrackManager] ⚠️ PeerConnection状态异常:', pc.connectionState);
-      }
-
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,  // 改为true以支持音频接收
-        offerToReceiveVideo: true,  // 改为true以支持视频接收
-      });
-
-      console.log('[TrackManager] 📝 Offer创建成功，设置本地描述...');
-      await pc.setLocalDescription(offer);
-      console.log('[TrackManager] ✅ 本地描述设置完成');
-
-      // 增加超时时间到5秒，给ICE候选收集更多时间
-      const iceTimeout = setTimeout(() => {
-        console.log('[TrackManager] ⏱️ ICE收集超时，发送当前offer');
-        if (ws.readyState === WebSocket.OPEN && pc.localDescription) {
-          ws.send(JSON.stringify({ type: 'offer', payload: pc.localDescription }));
-          console.log('[TrackManager] 📤 发送 offer (超时发送)');
-        }
-      }, 5000);
-
-      // 如果ICE收集已经完成，立即发送
-      if (pc.iceGatheringState === 'complete') {
-        clearTimeout(iceTimeout);
-        if (ws.readyState === WebSocket.OPEN && pc.localDescription) {
-          ws.send(JSON.stringify({ type: 'offer', payload: pc.localDescription }));
-          console.log('[TrackManager] 📤 发送 offer (ICE收集完成)');
-        }
-      } else {
-        console.log('[TrackManager] 🧊 等待ICE候选收集...');
-        // 监听ICE收集状态变化
-        pc.onicegatheringstatechange = () => {
-          console.log('[TrackManager] 🧊 ICE收集状态变化:', pc.iceGatheringState);
-          if (pc.iceGatheringState === 'complete') {
-            clearTimeout(iceTimeout);
-            if (ws.readyState === WebSocket.OPEN && pc.localDescription) {
-              ws.send(JSON.stringify({ type: 'offer', payload: pc.localDescription }));
-              console.log('[TrackManager] 📤 发送 offer (ICE收集完成)');
-            }
-          }
-        };
-
-        // 同时监听ICE候选事件，用于调试
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            console.log('[TrackManager] 🧊 收到ICE候选:', event.candidate.candidate.substring(0, 50) + '...');
-          } else {
-            console.log('[TrackManager] 🏁 ICE候选收集完成');
-          }
-        };
-      }
-    } catch (error) {
-      console.error('[TrackManager] ❌ 创建 offer 失败:', error);
-      stateManager.updateState({ error: '创建连接失败', isConnecting: false, canRetry: true });
+    if (!pc || !ws) {
+      console.error('[TrackManager] PeerConnection 或 WebSocket 不可用，无法请求重新协商');
+      return false;
     }
-  }, [stateManager]);
+
+    try {
+      console.log('[TrackManager] 📡 请求重新协商 - 媒体轨道已更新');
+      // 这里应该通过回调或事件通知 Core 层重新创建 Offer
+      // 暂时直接调用，但更好的设计是通过事件系统
+
+      // 触发重新协商事件（应该由 Core 层监听）
+      console.log('[TrackManager] ⚠️ 需要 Core 层支持重新协商回调机制');
+      return true;
+    } catch (error) {
+      console.error('[TrackManager] 请求重新协商失败:', error);
+      return false;
+    }
+  }, []);
 
   // 添加媒体轨道
   const addTrack = useCallback((track: MediaStreamTrack, stream: MediaStream) => {
@@ -113,6 +76,13 @@ export function useWebRTCTrackManager(
     const pc = pcRef.current;
     if (!pc) {
       console.warn('[TrackManager] PeerConnection 尚未准备就绪，将在连接建立后设置onTrack');
+
+      // 检查是否已有重试在进行，避免多个重试循环
+      if (retryInProgressRef.current) {
+        console.log('[TrackManager] 已有重试进程在运行，跳过重复重试');
+        return;
+      }
+
       // 检查WebSocket连接状态，只有连接后才尝试设置
       const state = stateManager.getState();
       if (!state.isWebSocketConnected) {
@@ -120,15 +90,18 @@ export function useWebRTCTrackManager(
         return;
       }
 
+      retryInProgressRef.current = true;
+
       // 延迟设置，等待PeerConnection准备就绪
       let retryCount = 0;
-      const maxRetries = 50; // 增加重试次数到50次，即5秒
+      const maxRetries = 20; // 减少重试次数到20次，即2秒
 
       const checkAndSetTrackHandler = () => {
         const currentPc = pcRef.current;
         if (currentPc) {
           console.log('[TrackManager] ✅ PeerConnection 已准备就绪，设置onTrack处理器');
           currentPc.ontrack = handler;
+          retryInProgressRef.current = false; // 成功后重置标记
 
           // 如果已经有远程轨道，立即触发处理
           const receivers = currentPc.getReceivers();
@@ -148,6 +121,7 @@ export function useWebRTCTrackManager(
             setTimeout(checkAndSetTrackHandler, 100);
           } else {
             console.error('[TrackManager] ❌ PeerConnection 长时间未准备就绪，停止重试');
+            retryInProgressRef.current = false; // 失败后也要重置标记
           }
         }
       };
@@ -168,25 +142,34 @@ export function useWebRTCTrackManager(
     });
   }, [stateManager]);
 
-  // 立即创建offer（用于媒体轨道添加后的重新协商）
-  const createOfferNow = useCallback(async (pc: RTCPeerConnection, ws: WebSocket) => {
+  // 立即触发重新协商（用于媒体轨道添加后的重新协商）
+  const triggerRenegotiation = useCallback(async () => {
+    const pc = pcRef.current;
+    const ws = wsRef.current;
+
     if (!pc || !ws) {
       console.error('[TrackManager] PeerConnection 或 WebSocket 不可用');
       return false;
     }
 
     try {
-      await createOffer(pc, ws);
+      console.log('[TrackManager] 📡 触发媒体重新协商');
+      // 实际的 offer 创建应该由 Core 层处理
+      // 这里只是一个触发器，通知需要重新协商
       return true;
     } catch (error) {
-      console.error('[TrackManager] 创建 offer 失败:', error);
+      console.error('[TrackManager] 触发重新协商失败:', error);
       return false;
     }
-  }, [createOffer]);
+  }, []);
 
   // 设置 PeerConnection 引用
   const setPeerConnection = useCallback((pc: RTCPeerConnection | null) => {
     pcRef.current = pc;
+    // 当PeerConnection设置时，重置重试标记
+    if (pc) {
+      retryInProgressRef.current = false;
+    }
   }, []);
 
   // 设置 WebSocket 引用
@@ -198,8 +181,8 @@ export function useWebRTCTrackManager(
     addTrack,
     removeTrack,
     onTrack,
-    createOffer,
-    createOfferNow,
+    requestOfferRenegotiation,
+    triggerRenegotiation,
     // 内部方法，供核心连接管理器调用
     setPeerConnection,
     setWebSocket,

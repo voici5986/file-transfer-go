@@ -111,11 +111,11 @@ export interface WebRTCTrackManager {
   // 设置轨道处理器
   onTrack: (handler: (event: RTCTrackEvent) => void) => void;
 
-  // 创建 Offer
-  createOffer: (pc: RTCPeerConnection, ws: WebSocket) => Promise<void>;
+  // 请求重新协商（通知 Core 层需要重新创建 Offer）
+  requestOfferRenegotiation: () => Promise<boolean>;
 
-  // 立即创建offer（用于媒体轨道添加后的重新协商）
-  createOfferNow: (pc: RTCPeerConnection, ws: WebSocket) => Promise<boolean>;
+  // 触发重新协商
+  triggerRenegotiation: () => Promise<boolean>;
 
   // 内部方法，供核心连接管理器调用
   setPeerConnection: (pc: RTCPeerConnection | null) => void;

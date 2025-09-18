@@ -9,30 +9,56 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"chuan/internal/services"
 )
 
 // Server 服务器结构
 type Server struct {
-	httpServer *http.Server
-	config     *Config
+	httpServer  *http.Server
+	config      *Config
+	turnService *services.TurnService
 }
 
 // NewServer 创建新的服务器实例
-func NewServer(config *Config, handler http.Handler) *Server {
-	return &Server{
+func NewServer(config *Config, routerSetup *RouterSetup) *Server {
+	server := &Server{
 		httpServer: &http.Server{
 			Addr:         fmt.Sprintf(":%d", config.Port),
-			Handler:      handler,
+			Handler:      routerSetup.Router,
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 30 * time.Second,
 			IdleTimeout:  120 * time.Second,
 		},
 		config: config,
 	}
+
+	// 如果启用了TURN服务器，创建TURN服务实例
+	if config.TurnConfig.Enabled {
+		turnConfig := services.TurnServiceConfig{
+			Port:     config.TurnConfig.Port,
+			Username: config.TurnConfig.Username,
+			Password: config.TurnConfig.Password,
+			Realm:    config.TurnConfig.Realm,
+		}
+		server.turnService = services.NewTurnService(turnConfig)
+		
+		// 将TURN服务设置到处理器中
+		routerSetup.Handler.SetTurnService(server.turnService)
+	}
+
+	return server
 }
 
 // Start 启动服务器
 func (s *Server) Start() error {
+	// 启动TURN服务器（如果启用）
+	if s.turnService != nil {
+		if err := s.turnService.Start(); err != nil {
+			return fmt.Errorf("启动TURN服务器失败: %v", err)
+		}
+	}
+
 	log.Printf("🚀 服务器启动在端口 :%d", s.config.Port)
 	return s.httpServer.ListenAndServe()
 }
@@ -40,6 +66,14 @@ func (s *Server) Start() error {
 // Stop 停止服务器
 func (s *Server) Stop(ctx context.Context) error {
 	log.Println("🛑 正在关闭服务器...")
+	
+	// 停止TURN服务器（如果启用）
+	if s.turnService != nil {
+		if err := s.turnService.Stop(); err != nil {
+			log.Printf("⚠️ 停止TURN服务器失败: %v", err)
+		}
+	}
+	
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -62,8 +96,8 @@ func (s *Server) WaitForShutdown() {
 }
 
 // RunServer 运行服务器（包含启动和优雅关闭）
-func RunServer(config *Config, handler http.Handler) {
-	server := NewServer(config, handler)
+func RunServer(config *Config, routerSetup *RouterSetup) {
+	server := NewServer(config, routerSetup)
 
 	// 启动服务器
 	go func() {

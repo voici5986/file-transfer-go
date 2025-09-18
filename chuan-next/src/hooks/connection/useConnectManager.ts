@@ -1,5 +1,5 @@
 import { getWsUrl } from '@/lib/config';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useReadConnectState } from './state/useWebConnectStateManager';
 import { WebConnectState } from "./state/webConnectStore";
 import { ConnectType, DataHandler, IGetConnectState, IRegisterEventHandler, IWebConnection, IWebMessage, MessageHandler, Role } from "./types";
@@ -26,10 +26,19 @@ export function useConnectManager(): IWebConnection & IRegisterEventHandler & IG
     const wsConnection = useWebSocketConnection();
     const webrtcConnection = useSharedWebRTCManagerImpl();
 
-    // 当前活跃连接的引用
-    const currentConnectionRef = useRef<IWebConnection>(wsConnection);
+    // 当前活跃连接的引用 - 默认使用 WebRTC
+    const currentConnectionRef = useRef<IWebConnection>(webrtcConnection);
 
     const { getConnectState: innerState } = useReadConnectState();
+
+    // 确保连接引用与连接类型保持一致
+    useEffect(() => {
+        const targetConnection = currentConnectType === 'webrtc' ? webrtcConnection : wsConnection;
+        if (currentConnectionRef.current !== targetConnection) {
+            console.log('[ConnectManager] 🔄 同步连接引用到:', currentConnectType);
+            currentConnectionRef.current = targetConnection;
+        }
+    }, [currentConnectType, webrtcConnection, wsConnection]);
 
 
     // 连接状态管理
@@ -40,6 +49,7 @@ export function useConnectManager(): IWebConnection & IRegisterEventHandler & IG
         isPeerConnected: false,
         isDataChannelConnected: false,
         isMediaStreamConnected: false,
+        isJoinedRoom: false,
         currentConnectType: 'webrtc',
         state: 'closed',
         error: null,
@@ -243,8 +253,10 @@ export function useConnectManager(): IWebConnection & IRegisterEventHandler & IG
     }, []);
 
     const onTrack = useCallback((callback: (event: RTCTrackEvent) => void) => {
+        console.log('[ConnectManager] 🎧 设置 onTrack 处理器，当前连接类型:', currentConnectType);
+        console.log('[ConnectManager] 当前连接引用:', currentConnectionRef.current === webrtcConnection ? 'WebRTC' : 'WebSocket');
         currentConnectionRef.current.onTrack(callback);
-    }, []);
+    }, [currentConnectType, webrtcConnection]);
 
     const getPeerConnection = useCallback(() => {
         return currentConnectionRef.current.getPeerConnection();

@@ -10,12 +10,18 @@ import (
 
 type Handler struct {
 	webrtcService *services.WebRTCService
+	turnService   *services.TurnService
 }
 
 func NewHandler() *Handler {
 	return &Handler{
 		webrtcService: services.NewWebRTCService(),
 	}
+}
+
+// SetTurnService 设置TURN服务实例
+func (h *Handler) SetTurnService(turnService *services.TurnService) {
+	h.turnService = turnService
 }
 
 // HandleWebRTCWebSocket 处理WebRTC信令WebSocket连接
@@ -104,4 +110,102 @@ func (h *Handler) GetRoomStatusHandler(w http.ResponseWriter, r *http.Request) {
 	// 获取房间状态
 	status := h.webrtcService.GetRoomStatus(code)
 	json.NewEncoder(w).Encode(status)
+}
+
+// TurnStatsHandler 获取TURN服务器统计信息API
+func (h *Handler) TurnStatsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "方法不允许",
+		})
+		return
+	}
+
+	if h.turnService == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "TURN服务器未启用",
+		})
+		return
+	}
+
+	stats := h.turnService.GetStats()
+	response := map[string]interface{}{
+		"success": true,
+		"data":    stats,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// TurnConfigHandler 获取TURN服务器配置信息API（用于前端WebRTC配置）
+func (h *Handler) TurnConfigHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "方法不允许",
+		})
+		return
+	}
+
+	if h.turnService == nil || !h.turnService.IsRunning() {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "TURN服务器未启用或未运行",
+		})
+		return
+	}
+
+	turnInfo := h.turnService.GetTurnServerInfo()
+	response := map[string]interface{}{
+		"success": true,
+		"data":    turnInfo,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// AdminStatusHandler 获取服务器总体状态API
+func (h *Handler) AdminStatusHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "方法不允许",
+		})
+		return
+	}
+
+	// 获取WebRTC服务状态
+	// 这里简化，实际可以从WebRTC服务获取更多信息
+	webrtcStatus := map[string]interface{}{
+		"isRunning": true, // WebRTC服务总是运行的
+	}
+
+	// 获取TURN服务状态
+	var turnStatus interface{}
+	if h.turnService != nil {
+		turnStatus = h.turnService.GetStats()
+	} else {
+		turnStatus = map[string]interface{}{
+			"isRunning": false,
+			"message":   "TURN服务器未启用",
+		}
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"webrtc": webrtcStatus,
+			"turn":   turnStatus,
+		},
+	}
+
+	json.NewEncoder(w).Encode(response)
 }
