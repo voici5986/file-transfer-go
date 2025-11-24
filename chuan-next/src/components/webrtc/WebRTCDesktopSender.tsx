@@ -5,7 +5,9 @@ import RoomInfoDisplay from '@/components/RoomInfoDisplay';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast-simple';
 import { useDesktopShareBusiness } from '@/hooks/desktop-share';
-import { Monitor, Repeat, Share, Square } from 'lucide-react';
+import { useVoiceChatBusiness } from '@/hooks/desktop-share/useVoiceChatBusiness';
+import { VoiceIndicator } from '@/components/VoiceIndicator';
+import { Monitor, Repeat, Share, Square, Mic, MicOff } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface WebRTCDesktopSenderProps {
@@ -19,6 +21,23 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
 
   // 使用桌面共享业务逻辑
   const desktopShare = useDesktopShareBusiness();
+  
+  // 使用语音通话业务逻辑 - 传入同一个connection实例
+  const voiceChat = useVoiceChatBusiness(desktopShare.webRTCConnection);
+
+  // 调试：监控语音状态变化（只监听状态，不监听实时音量）
+  useEffect(() => {
+    console.log('[DesktopShareSender] 🎤 语音状态变化:', {
+      isVoiceEnabled: voiceChat.isVoiceEnabled,
+      isRemoteVoiceActive: voiceChat.isRemoteVoiceActive,
+      debug: voiceChat._debug
+    });
+  }, [
+    voiceChat.isVoiceEnabled, 
+    voiceChat.isRemoteVoiceActive
+    // 不监听 localVolume, remoteVolume, localIsSpeaking, remoteIsSpeaking
+    // 这些值每帧都在变化（约60fps），会导致过度渲染
+  ]);
 
   // 调试：监控localStream状态变化
   useEffect(() => {
@@ -33,6 +52,11 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
 
   // 保持本地视频元素的引用
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // 设置远程音频元素的回调
+  const setRemoteAudioRef = useCallback((audioElement: HTMLAudioElement | null) => {
+    voiceChat.setRemoteAudioRef(audioElement);
+  }, [voiceChat]);
 
   // 处理本地流变化，确保视频正确显示
   useEffect(() => {
@@ -213,6 +237,34 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
     }
   }, [desktopShare, showToast]);
 
+  // 开启语音
+  const handleEnableVoice = useCallback(async () => {
+    try {
+      console.log('[DesktopShareSender] 用户点击开启语音');
+      await voiceChat.enableVoice();
+      showToast('语音已开启', 'success');
+    } catch (error) {
+      console.error('[DesktopShareSender] 开启语音失败:', error);
+      let errorMessage = '开启语音失败';
+      
+      if (error instanceof Error) {
+        if (error.message.includes('麦克风权限') || error.message.includes('Permission')) {
+          errorMessage = '无法访问麦克风，请检查浏览器权限设置';
+        } else if (error.message.includes('P2P连接')) {
+          errorMessage = '请先等待对方加入';
+        } else if (error.message.includes('NotFoundError') || error.message.includes('设备')) {
+          errorMessage = '未检测到麦克风设备';
+        } else if (error.message.includes('NotAllowedError')) {
+          errorMessage = '麦克风权限被拒绝，请在浏览器设置中允许使用麦克风';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      showToast(errorMessage, 'error');
+    }
+  }, [voiceChat, showToast]);
+
   return (
     <div className={`space-y-4 sm:space-y-6 ${className || ''}`}>
       <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 sm:p-6 shadow-lg border border-white/20 animate-fade-in-up">
@@ -293,16 +345,16 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                   {/* 控制按钮 */}
                   {desktopShare.isSharing && (
                     <div className="flex items-center space-x-2">
-                      <Button
-                        onClick={handleSwitchDesktop}
-                        disabled={isLoading}
-                        variant="outline"
-                        size="sm"
-                        className="text-slate-700 border-slate-300"
-                      >
-                        <Repeat className="w-4 h-4 mr-1" />
-                        切换桌面
-                      </Button>
+                        <Button
+                          onClick={handleSwitchDesktop}
+                          disabled={isLoading}
+                          variant="outline"
+                          size="sm"
+                          className="text-slate-700 border-slate-300"
+                        >
+                          <Repeat className="w-4 h-4 mr-1" />
+                          切换桌面
+                        </Button>
                       <Button
                         onClick={handleStopSharing}
                         disabled={isLoading}
@@ -312,6 +364,30 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                       >
                         <Square className="w-4 h-4 mr-1" />
                         停止共享
+                      </Button>
+                      
+                      {/* 语音控制按钮 */}
+                      <Button
+                        onClick={voiceChat.isVoiceEnabled ? voiceChat.disableVoice : handleEnableVoice}
+                        disabled={isLoading}
+                        variant="outline"
+                        size="sm"
+                        className={voiceChat.isVoiceEnabled 
+                          ? "text-green-700 border-green-300 hover:bg-green-50" 
+                          : "text-slate-700 border-slate-300 hover:bg-slate-50"
+                        }
+                      >
+                        {voiceChat.isVoiceEnabled ? (
+                          <>
+                            <Mic className="w-4 h-4 mr-1" />
+                            关闭发言
+                          </>
+                        ) : (
+                          <>
+                            <MicOff className="w-4 h-4 mr-1" />
+                            开启发言
+                          </>
+                        )}
                       </Button>
                     </div>
                   )}
@@ -347,9 +423,44 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                           </div>
                         </div>
                       )}
+                      
+                      {/* 语音状态指示器 - 始终显示，点击切换 */}
+                      <div className="absolute bottom-2 right-2 z-10">
+                        <div 
+                          className="bg-gradient-to-br from-slate-50/95 to-white/95 backdrop-blur rounded-xl p-3 shadow-xl border border-slate-200/50 cursor-pointer hover:shadow-2xl transition-shadow"
+                          onClick={voiceChat.isVoiceEnabled ? voiceChat.disableVoice : handleEnableVoice}
+                          title={voiceChat.isVoiceEnabled ? "点击关闭发言" : "点击开启发言"}
+                        >
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                              voiceChat.isVoiceEnabled ? 'bg-blue-100' : 'bg-slate-100'
+                            }`}>
+                              {voiceChat.isVoiceEnabled ? (
+                                <Mic className="w-4 h-4 text-blue-600" />
+                              ) : (
+                                <MicOff className="w-4 h-4 text-slate-400" />
+                              )}
+                            </div>
+                            <div className="flex flex-col">
+                              <span className={`text-xs font-medium ${
+                                voiceChat.isVoiceEnabled ? 'text-slate-700' : 'text-slate-500'
+                              }`}>我的发言</span>
+                              <span className="text-[10px] text-slate-500">
+                                {voiceChat.isVoiceEnabled ? '点击关闭' : '点击开启'}
+                              </span>
+                            </div>
+                            {voiceChat.isVoiceEnabled && (
+                              <VoiceIndicator
+                                volume={voiceChat.localVolume}
+                                isSpeaking={voiceChat.localIsSpeaking}
+                                isMuted={false}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
-
                 </div>
               </div>
             )}
@@ -375,6 +486,14 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                 navigator.clipboard.writeText(link);
                 showToast('观看链接已复制', 'success');
               }}
+            />
+            
+            {/* 隐藏的远程音频播放元素 - 用于播放观看方的语音 */}
+            <audio
+              ref={setRemoteAudioRef}
+              autoPlay
+              playsInline
+              className="hidden"
             />
           </div>
         )}

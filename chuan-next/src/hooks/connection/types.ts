@@ -49,7 +49,7 @@ export interface IWebConnection extends IRegisterEventHandler, IGetConnectState 
   // 媒体轨道方法
   addTrack: (track: MediaStreamTrack, stream: MediaStream) => RTCRtpSender | null;
   removeTrack: (sender: RTCRtpSender) => void;
-  onTrack: (callback: (event: RTCTrackEvent) => void) => void;
+  onTrack: (callback: (event: RTCTrackEvent) => void) => () => void; // 返回清理函数
   getPeerConnection: () => RTCPeerConnection | null;
   createOfferNow: () => Promise<boolean>;
 
@@ -108,8 +108,8 @@ export interface WebRTCTrackManager {
   // 移除媒体轨道
   removeTrack: (sender: RTCRtpSender) => void;
 
-  // 设置轨道处理器
-  onTrack: (handler: (event: RTCTrackEvent) => void) => void;
+  // 设置轨道处理器 - 返回清理函数以移除处理器
+  onTrack: (handler: (event: RTCTrackEvent) => void) => () => void;
 
   // 请求重新协商（通知 Core 层需要重新创建 Offer）
   requestOfferRenegotiation: () => Promise<boolean>;

@@ -103,7 +103,36 @@ export function useWebRTCConnectionCore(
   // 创建 Offer（应该在 Core 层处理信令）
   const createOffer = useCallback(async (pc: RTCPeerConnection, ws: WebSocket) => {
     try {
-      console.log('[ConnectionCore] 🎬 开始创建offer，当前轨道数量:', pc.getSenders().length);
+      // 清理所有没有轨道的发送器（避免空 sender 干扰）
+      const allSenders = pc.getSenders();
+      console.log('[ConnectionCore] 🎬 开始创建offer，总发送器数量:', allSenders.length);
+      
+      // 移除所有 track 为 null 的 sender
+      const emptyRemovals = allSenders.filter(sender => !sender.track).map(async sender => {
+        try {
+          await pc.removeTrack(sender);
+          console.log('[ConnectionCore] 🗑️ 已清理空发送器');
+        } catch (e) {
+          console.warn('[ConnectionCore] ⚠️ 清理空发送器失败:', e);
+        }
+      });
+      
+      if (emptyRemovals.length > 0) {
+        await Promise.all(emptyRemovals);
+        console.log('[ConnectionCore] 🧹 已清理', emptyRemovals.length, '个空发送器');
+      }
+      
+      // 获取清理后的有效发送器
+      const activeSenders = pc.getSenders().filter(s => s.track);
+      console.log('[ConnectionCore] 📊 有效轨道数量:', activeSenders.length);
+      activeSenders.forEach((sender, index) => {
+        console.log(`[ConnectionCore]   发送器 ${index}:`, {
+          kind: sender.track?.kind,
+          id: sender.track?.id,
+          enabled: sender.track?.enabled,
+          readyState: sender.track?.readyState
+        });
+      });
 
       // 确保连接状态稳定
       if (pc.connectionState !== 'connecting' && pc.connectionState !== 'new') {
@@ -186,8 +215,14 @@ export function useWebRTCConnectionCore(
     // 设置轨道接收处理（对于接收方）
     // 注意：这个处理器会在 TrackManager.onTrack() 中被业务逻辑覆盖
     pc.ontrack = (event) => {
-      console.log('[ConnectionCore] 🎥 PeerConnection收到轨道:', event.track.kind, event.track.id, '状态:', event.track.readyState);
-      console.log('[ConnectionCore] 关联的流数量:', event.streams.length);
+      console.log('[ConnectionCore] 📥 PeerConnection收到远程轨道:', {
+        kind: event.track.kind,
+        id: event.track.id,
+        enabled: event.track.enabled,
+        readyState: event.track.readyState,
+        streamCount: event.streams.length,
+        streamId: event.streams[0]?.id
+      });
       console.log('[ConnectionCore] ⚠️ 默认轨道处理器 - 业务层应该通过 TrackManager.onTrack() 设置自己的处理器');
     };
 
@@ -469,9 +504,40 @@ export function useWebRTCConnectionCore(
                   await new Promise(resolve => setTimeout(resolve, 100));
                 }
 
-                if (pcOffer && pcOffer.signalingState === 'stable') {
+                if (pcOffer) {
+                  const currentState = pcOffer.signalingState;
+                  console.log('[ConnectionCore] 当前信令状态:', currentState, '角色:', role);
+                  
+                  // Perfect Negotiation 模式：receiver 是 polite，sender 是 impolite
+                  const isPolite = role === 'receiver';
+                  
+                  // 处理交叉协商
+                  if (currentState === 'have-local-offer') {
+                    if (isPolite) {
+                      // Polite peer (receiver) 回滚自己的 offer
+                      console.log('[ConnectionCore] 🔄 [Polite-Receiver] 交叉协商，回滚本地 offer');
+                      await pcOffer.setLocalDescription({ type: 'rollback' });
+                    } else {
+                      // Impolite peer (sender) 也需要接受对方的 offer！
+                      // 之前的逻辑错误：不应该直接 break，而是也要回滚或等待
+                      console.log('[ConnectionCore] 🔄 [Impolite-Sender] 交叉协商，回滚并接受对方 offer');
+                      await pcOffer.setLocalDescription({ type: 'rollback' });
+                    }
+                  }
+                  
                   await pcOffer.setRemoteDescription(new RTCSessionDescription(message.payload));
                   console.log('[ConnectionCore] ✅ 设置远程描述完成');
+                  
+                  // 记录当前本地轨道
+                  const currentSenders = pcOffer.getSenders();
+                  console.log('[ConnectionCore] 📊 创建 answer 前的本地轨道数量:', currentSenders.length);
+                  currentSenders.forEach((sender, index) => {
+                    console.log(`[ConnectionCore]   本地发送器 ${index}:`, {
+                      kind: sender.track?.kind,
+                      id: sender.track?.id,
+                      enabled: sender.track?.enabled
+                    });
+                  });
 
                   const answer = await pcOffer.createAnswer();
                   await pcOffer.setLocalDescription(answer);
@@ -480,7 +546,7 @@ export function useWebRTCConnectionCore(
                   ws.send(JSON.stringify({ type: 'answer', payload: answer }));
                   console.log('[ConnectionCore] 📤 发送 answer');
                 } else {
-                  console.warn('[ConnectionCore] ⚠️ PeerConnection状态不是stable或不存在:', pcOffer?.signalingState);
+                  console.warn('[ConnectionCore] ⚠️ PeerConnection不存在');
                 }
                 break;
 
@@ -505,21 +571,12 @@ export function useWebRTCConnectionCore(
                     const signalingState = pcAnswer.signalingState;
                     console.log('[ConnectionCore] 当前信令状态:', signalingState, '角色:', role);
 
-                    // 如果是发送方且状态是stable，说明已经有媒体轨道，应该发送新的offer而不是处理answer
-                    if (role === 'sender' && signalingState === 'stable') {
-                      console.log('[ConnectionCore] 🎬 发送方处于stable状态，发送包含媒体轨道的新offer');
-                      try {
-                        await createOffer(pcAnswer, ws);
-                        console.log('[ConnectionCore] ✅ 媒体offer发送完成');
-                      } catch (error) {
-                        console.error('[ConnectionCore] ❌ 发送媒体offer失败:', error);
-                      }
-                    } else if (signalingState === 'have-local-offer') {
+                    if (signalingState === 'have-local-offer') {
                       // 正常的answer处理
                       await pcAnswer.setRemoteDescription(new RTCSessionDescription(message.payload));
                       console.log('[ConnectionCore] ✅ answer 处理完成');
                     } else {
-                      console.warn('[ConnectionCore] ⚠️ PeerConnection状态异常:', signalingState, '跳过answer处理');
+                      console.warn('[ConnectionCore] ⚠️ PeerConnection状态不是have-local-offer:', signalingState, '跳过answer处理');
                     }
                   }
                 } catch (error) {
@@ -529,6 +586,28 @@ export function useWebRTCConnectionCore(
                     // 清理连接状态，让客户端重新连接
                     stateManager.updateState({ error: 'WebRTC连接状态异常，请重新连接', isPeerConnected: false });
                   }
+                }
+                break;
+
+              case 'renegotiate-request':
+                // 接收方请求重新协商（例如添加/移除音频轨道）
+                console.log('[ConnectionCore] 🔄 收到重新协商请求:', message.payload);
+                if (role === 'sender') {
+                  // 只有发送方才能响应重新协商请求
+                  const pcRenegotiate = pcRef.current;
+                  if (pcRenegotiate) {
+                    console.log('[ConnectionCore] 📡 [Sender] 响应重新协商请求，创建新的 offer');
+                    try {
+                      await createOffer(pcRenegotiate, ws);
+                      console.log('[ConnectionCore] ✅ [Sender] 重新协商 offer 发送完成');
+                    } catch (error) {
+                      console.error('[ConnectionCore] ❌ [Sender] 重新协商失败:', error);
+                    }
+                  } else {
+                    console.warn('[ConnectionCore] ⚠️ [Sender] PeerConnection 不存在，无法重新协商');
+                  }
+                } else {
+                  console.warn('[ConnectionCore] ⚠️ [Receiver] 收到重新协商请求但角色不是 sender');
                 }
                 break;
 

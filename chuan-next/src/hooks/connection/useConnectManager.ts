@@ -35,7 +35,6 @@ export function useConnectManager(): IWebConnection & IRegisterEventHandler & IG
     useEffect(() => {
         const targetConnection = currentConnectType === 'webrtc' ? webrtcConnection : wsConnection;
         if (currentConnectionRef.current !== targetConnection) {
-            console.log('[ConnectManager] 🔄 同步连接引用到:', currentConnectType);
             currentConnectionRef.current = targetConnection;
         }
     }, [currentConnectType, webrtcConnection, wsConnection]);
@@ -253,10 +252,8 @@ export function useConnectManager(): IWebConnection & IRegisterEventHandler & IG
     }, []);
 
     const onTrack = useCallback((callback: (event: RTCTrackEvent) => void) => {
-        console.log('[ConnectManager] 🎧 设置 onTrack 处理器，当前连接类型:', currentConnectType);
-        console.log('[ConnectManager] 当前连接引用:', currentConnectionRef.current === webrtcConnection ? 'WebRTC' : 'WebSocket');
-        currentConnectionRef.current.onTrack(callback);
-    }, [currentConnectType, webrtcConnection]);
+        return currentConnectionRef.current.onTrack(callback);
+    }, []); // 空依赖，使用 ref 确保总是获取最新的连接
 
     const getPeerConnection = useCallback(() => {
         return currentConnectionRef.current.getPeerConnection();

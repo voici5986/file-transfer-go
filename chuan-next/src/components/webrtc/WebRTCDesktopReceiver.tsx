@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Monitor, Square } from 'lucide-react';
+import { Monitor, Square, Mic, MicOff } from 'lucide-react';
 import { useToast } from '@/components/ui/toast-simple';
 import { useDesktopShareBusiness } from '@/hooks/desktop-share';
+import { useVoiceChatBusiness } from '@/hooks/desktop-share/useVoiceChatBusiness';
+import { VoiceIndicator } from '@/components/VoiceIndicator';
 import DesktopViewer from '@/components/DesktopViewer';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 
@@ -24,6 +26,26 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
 
   // 使用桌面共享业务逻辑
   const desktopShare = useDesktopShareBusiness();
+  
+  // 使用语音通话业务逻辑
+  const voiceChat = useVoiceChatBusiness(desktopShare.webRTCConnection);
+  
+  // 远程音频元素引用
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // 调试：监控语音状态变化（只监听状态，不监听实时音量）
+  useEffect(() => {
+    console.log('[DesktopShareReceiver] 🎤 语音状态变化:', {
+      isVoiceEnabled: voiceChat.isVoiceEnabled,
+      isRemoteVoiceActive: voiceChat.isRemoteVoiceActive,
+      debug: voiceChat._debug
+    });
+  }, [
+    voiceChat.isVoiceEnabled, 
+    voiceChat.isRemoteVoiceActive
+    // 不监听 localVolume, remoteVolume, localIsSpeaking, remoteIsSpeaking
+    // 这些值每帧都在变化（约60fps），会导致过度渲染
+  ]);
 
   // 通知父组件连接状态变化
   useEffect(() => {
@@ -117,7 +139,7 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
     }
   }, [desktopShare, inputCode, isJoiningRoom, showToast]);
 
-  // 停止观看
+  // 停止观看桌面
   const handleStopViewing = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -131,6 +153,34 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
       setIsLoading(false);
     }
   }, [desktopShare, showToast]);
+
+  // 开启语音
+  const handleEnableVoice = useCallback(async () => {
+    try {
+      console.log('[DesktopShareReceiver] 用户点击开启语音');
+      await voiceChat.enableVoice();
+      showToast('语音已开启', 'success');
+    } catch (error) {
+      console.error('[DesktopShareReceiver] 开启语音失败:', error);
+      let errorMessage = '开启语音失败';
+      
+      if (error instanceof Error) {
+        if (error.message.includes('麦克风权限') || error.message.includes('Permission')) {
+          errorMessage = '无法访问麦克风，请检查浏览器权限设置';
+        } else if (error.message.includes('P2P连接')) {
+          errorMessage = '请先等待连接建立';
+        } else if (error.message.includes('NotFoundError') || error.message.includes('设备')) {
+          errorMessage = '未检测到麦克风设备';
+        } else if (error.message.includes('NotAllowedError')) {
+          errorMessage = '麦克风权限被拒绝，请在浏览器设置中允许使用麦克风';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      showToast(errorMessage, 'error');
+    }
+  }, [voiceChat, showToast]);
 
   // 如果有初始代码且还未加入观看，自动尝试加入
   React.useEffect(() => {
@@ -320,50 +370,143 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
                 />
               </div>
 
-              {/* 观看中的控制面板 */}
-              <div className="flex justify-center mb-4">
-                <div className="bg-white rounded-lg p-3 shadow-lg border flex items-center space-x-4">
-                  <div className="flex items-center space-x-2 text-green-600">
-                    <Monitor className="w-4 h-4" />
-                    <span className="font-semibold">观看中</span>
+              {/* 观看中的控制面板 - 移动端优化 */}
+              <div className="mb-4">
+                <div className="bg-white rounded-lg p-3 shadow-lg border">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                    {/* 状态指示 */}
+                    <div className="flex items-center space-x-2 text-green-600">
+                      <Monitor className="w-4 h-4" />
+                      <span className="font-semibold">观看中</span>
+                    </div>
+                    
+                    {/* 对方说话提示 - 移动端全宽 */}
+                    {voiceChat.isRemoteVoiceActive && voiceChat.remoteIsSpeaking && (
+                      <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 animate-pulse">
+                        <div className="w-2 h-2 bg-green-500 rounded-full animate-ping"></div>
+                        <Mic className="w-3.5 h-3.5" />
+                        <span className="text-sm font-medium">对方正在讲话</span>
+                      </div>
+                    )}
+                    
+                    {/* 按钮组 - 移动端全宽横向 */}
+                    <div className="flex gap-2 sm:ml-auto w-full sm:w-auto">
+                      <Button
+                        onClick={voiceChat.isVoiceEnabled ? () => voiceChat.disableVoice() : handleEnableVoice}
+                        variant="outline"
+                        size="sm"
+                        className={`flex-1 sm:flex-initial ${
+                          voiceChat.isVoiceEnabled 
+                            ? "text-green-600 border-green-300" 
+                            : "text-slate-600 border-slate-300"
+                        }`}
+                        disabled={!desktopShare.isPeerConnected && !voiceChat.isVoiceEnabled}
+                      >
+                        {voiceChat.isVoiceEnabled ? (
+                          <>
+                            <Mic className="w-4 h-4 sm:mr-1" />
+                            <span className="hidden sm:inline">关闭发言</span>
+                          </>
+                        ) : (
+                          <>
+                            <MicOff className="w-4 h-4 sm:mr-1" />
+                            <span className="hidden sm:inline">开启发言</span>
+                          </>
+                        )}
+                      </Button>
+                      
+                      <Button
+                        onClick={handleStopViewing}
+                        disabled={isLoading}
+                        variant="destructive"
+                        size="sm"
+                        className="flex-1 sm:flex-initial"
+                      >
+                        <Square className="w-4 h-4 sm:mr-2" />
+                        <span className="hidden sm:inline">{isLoading ? '退出中...' : '退出观看'}</span>
+                      </Button>
+                    </div>
                   </div>
-                  <Button
-                    onClick={handleStopViewing}
-                    disabled={isLoading}
-                    variant="destructive"
-                    size="sm"
-                  >
-                    <Square className="w-4 h-4 mr-2" />
-                    {isLoading ? '退出中...' : '退出观看'}
-                  </Button>
                 </div>
               </div>
 
               {/* 桌面显示区域 */}
-              {desktopShare.remoteStream ? (
-                <DesktopViewer
-                  stream={desktopShare.remoteStream}
-                  isConnected={desktopShare.isViewing}
-                  connectionCode={inputCode}
-                  onDisconnect={handleStopViewing}
-                />
-              ) : (
-                <div className="bg-white/80 backdrop-blur-sm rounded-xl p-8 border border-slate-200">
-                  <div className="text-center">
-                    <Monitor className="w-16 h-16 mx-auto text-slate-400 mb-4" />
-                    <p className="text-slate-600 mb-2">等待接收桌面画面...</p>
-                    <p className="text-sm text-slate-500">发送方开始共享后，桌面画面将在这里显示</p>
-                    
-                    <div className="flex items-center justify-center space-x-2 mt-4">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-500"></div>
-                      <span className="text-sm text-purple-600">等待桌面流...</span>
-                    </div>                                     
+              <div className="relative">
+                {desktopShare.remoteStream ? (
+                  <DesktopViewer
+                    stream={desktopShare.remoteStream}
+                    isConnected={desktopShare.isViewing}
+                    connectionCode={inputCode}
+                    onDisconnect={handleStopViewing}
+                  />
+                ) : (
+                  <div className="bg-white/80 backdrop-blur-sm rounded-xl p-8 border border-slate-200">
+                    <div className="text-center">
+                      <Monitor className="w-16 h-16 mx-auto text-slate-400 mb-4" />
+                      <p className="text-slate-600 mb-2">等待接收桌面画面...</p>
+                      <p className="text-sm text-slate-500">发送方开始共享后，桌面画面将在这里显示</p>
+                      
+                      <div className="flex items-center justify-center space-x-2 mt-4">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-500"></div>
+                        <span className="text-sm text-purple-600">等待桌面流...</span>
+                      </div>                                     
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+                
+                {/* 语音状态指示器 - 始终显示，点击切换 */}
+                {desktopShare.remoteStream && (
+                  <div className="mt-4">
+                    <div 
+                      className="bg-gradient-to-br from-slate-50 to-white rounded-xl p-3 shadow-lg border border-slate-200 cursor-pointer hover:shadow-xl transition-shadow"
+                      onClick={voiceChat.isVoiceEnabled ? () => voiceChat.disableVoice() : handleEnableVoice}
+                      title={voiceChat.isVoiceEnabled ? "点击关闭发言" : "点击开启发言"}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                            voiceChat.isVoiceEnabled ? 'bg-blue-100' : 'bg-slate-100'
+                          }`}>
+                            {voiceChat.isVoiceEnabled ? (
+                              <Mic className="w-4 h-4 text-blue-600" />
+                            ) : (
+                              <MicOff className="w-4 h-4 text-slate-400" />
+                            )}
+                          </div>
+                          <div className="flex flex-col">
+                            <span className={`text-sm font-medium ${
+                              voiceChat.isVoiceEnabled ? 'text-slate-700' : 'text-slate-500'
+                            }`}>我的发言</span>
+                            <span className="text-xs text-slate-500">
+                              {voiceChat.isVoiceEnabled ? '点击关闭' : '点击开启'}
+                            </span>
+                          </div>
+                        </div>
+                        {voiceChat.isVoiceEnabled && (
+                          <VoiceIndicator
+                            volume={voiceChat.localVolume}
+                            isSpeaking={voiceChat.localIsSpeaking}
+                            isMuted={false}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
+        
+        {/* 隐藏的音频元素用于播放远程音频 */}
+        <audio
+          ref={(el) => {
+            remoteAudioRef.current = el;
+            voiceChat.setRemoteAudioRef(el);
+          }}
+          autoPlay
+          style={{ display: 'none' }}
+        />
       </div>
     </div>
   );

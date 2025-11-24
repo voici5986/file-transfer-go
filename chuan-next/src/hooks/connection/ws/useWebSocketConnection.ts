@@ -310,8 +310,10 @@ export function useWebSocketConnection(): IWebConnection & { injectWebSocket: (w
     console.warn('[WebSocket] WebSocket 不支持媒体轨道');
   }, []);
 
-  const onTrack = useCallback(() => {
+  const onTrack = useCallback((callback: (event: RTCTrackEvent) => void): (() => void) => {
     console.warn('[WebSocket] WebSocket 不支持媒体轨道');
+    // 返回清理函数以符合接口预期
+    return () => {};
   }, []);
 
   const getPeerConnection = useCallback(() => {

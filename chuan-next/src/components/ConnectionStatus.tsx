@@ -15,16 +15,18 @@ interface ConnectionStatusProps {
 }
 
 // 连接状态枚举
-const getConnectionStatus = (currentRoom: { code: string; role: Role } | null) => {
-
-  const { getConnectState } = useReadConnectState(); // 确保状态管理器被初始化
-  const connection = getConnectState();
-  const isWebSocketConnected = connection?.isWebSocketConnected || false;
-  const isPeerConnected = connection?.isPeerConnected || false;
-  const isConnecting = connection?.isConnecting || false;
-  const error = connection?.error || null;
-  const currentConnectType = connection?.currentConnectType || 'webrtc';
-  const isJoinedRoom = connection?.isJoinedRoom || false;
+const getConnectionStatus = (
+  currentRoom: { code: string; role: Role } | null,
+  connection: {
+    isWebSocketConnected: boolean;
+    isPeerConnected: boolean;
+    isConnecting: boolean;
+    error: string | null;
+    currentConnectType: string;
+    isJoinedRoom: boolean;
+  }
+) => {
+  const { isWebSocketConnected, isPeerConnected, isConnecting, error, currentConnectType, isJoinedRoom } = connection;
 
   if (!currentRoom) {
     return {
@@ -205,16 +207,15 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
     isConnecting: webrtcState.isConnecting,
     error: webrtcState.error,
     currentConnectType: webrtcState.currentConnectType,
+    isJoinedRoom: webrtcState.isJoinedRoom,
   };
-
-  const isConnected = webrtcState.isWebSocketConnected && webrtcState.isPeerConnected;
 
   // 如果是内联模式，只返回状态文字
   if (inline) {
     return <span className={cn('text-sm text-slate-600', className)}>{getConnectionStatusText(connection)}</span>;
   }
 
-  const status = getConnectionStatus(currentRoom ?? null);
+  const status = getConnectionStatus(currentRoom ?? null, connection);
 
   if (compact) {
     return (

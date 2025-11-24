@@ -43,65 +43,81 @@ export function useDesktopShareBusiness() {
   }, []); // 移除updateState依赖，直接使用setState
 
   // 设置远程轨道处理器（始终监听）
-  useEffect(() => {
-    console.log('[DesktopShare] 🎧 设置远程轨道处理器');
+  const handleRemoteTrack = useCallback((event: RTCTrackEvent) => {
+    // 只处理视频轨道，音频轨道由 useVoiceChatBusiness 处理
+    if (event.track.kind !== 'video') {
+      console.log('[DesktopShare] ⏭️ 跳过非视频轨道:', event.track.kind, event.track.id);
+      return;
+    }
 
-    const trackHandler = (event: RTCTrackEvent) => {
-      console.log('[DesktopShare] 🎥 收到远程轨道:', event.track.kind, event.track.id, '状态:', event.track.readyState);
-      console.log('[DesktopShare] 远程流数量:', event.streams.length);
+    console.log('[DesktopShare] 🎥 收到远程视频轨道:', event.track.id, '状态:', event.track.readyState);
+    console.log('[DesktopShare] 远程流数量:', event.streams.length);
 
-      if (event.streams.length > 0) {
-        const remoteStream = event.streams[0];
-        console.log('[DesktopShare] 🎬 设置远程流，轨道数量:', remoteStream.getTracks().length);
-        remoteStream.getTracks().forEach(track => {
-          console.log('[DesktopShare] 远程轨道:', track.kind, track.id, '启用:', track.enabled, '状态:', track.readyState);
-        });
-
-        // 确保轨道已启用
-        remoteStream.getTracks().forEach(track => {
+    if (event.streams.length > 0) {
+      const remoteStream = event.streams[0];
+      console.log('[DesktopShare] 🎬 设置远程流，轨道数量:', remoteStream.getTracks().length);
+      
+      // 只提取视频轨道创建新的视频流
+      const videoTracks = remoteStream.getVideoTracks();
+      if (videoTracks.length > 0) {
+        const videoStream = new MediaStream(videoTracks);
+        console.log('[DesktopShare] 📹 创建纯视频流，视频轨道数:', videoTracks.length);
+        
+        videoTracks.forEach(track => {
+          console.log('[DesktopShare] 视频轨道:', track.id, '启用:', track.enabled, '状态:', track.readyState);
+          // 确保轨道已启用
           if (!track.enabled) {
-            console.log('[DesktopShare] 🔓 启用远程轨道:', track.id);
+            console.log('[DesktopShare] 🔓 启用视频轨道:', track.id);
             track.enabled = true;
           }
         });
 
-        // 直接使用setState而不是handleRemoteStream，避免依赖问题
-        setState(prev => ({ ...prev, remoteStream }));
+        // 直接使用setState
+        setState(prev => ({ ...prev, remoteStream: videoStream }));
 
         // 如果有视频元素引用，设置流
         if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
-        }
-      } else {
-        console.warn('[DesktopShare] ⚠️ 收到轨道但没有关联的流');
-        // 尝试从轨道创建流
-        try {
-          const newStream = new MediaStream([event.track]);
-          console.log('[DesktopShare] 🔄 从轨道创建新流:', newStream.id);
-
-          // 确保轨道已启用
-          newStream.getTracks().forEach(track => {
-            if (!track.enabled) {
-              console.log('[DesktopShare] 🔓 启用新流中的轨道:', track.id);
-              track.enabled = true;
-            }
-          });
-
-          // 直接使用setState
-          setState(prev => ({ ...prev, remoteStream: newStream }));
-
-          // 如果有视频元素引用，设置流
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = newStream;
-          }
-        } catch (error) {
-          console.error('[DesktopShare] ❌ 从轨道创建流失败:', error);
+          remoteVideoRef.current.srcObject = videoStream;
         }
       }
-    };
+    } else {
+      console.warn('[DesktopShare] ⚠️ 收到视频轨道但没有关联的流');
+      // 尝试从轨道创建流
+      try {
+        const newStream = new MediaStream([event.track]);
+        console.log('[DesktopShare] 🔄 从视频轨道创建新流:', newStream.id);
 
-    webRTC.onTrack(trackHandler);
-  }, [webRTC]); // 只依赖webRTC，移除handleRemoteStream依赖
+        // 确保轨道已启用
+        if (!event.track.enabled) {
+          console.log('[DesktopShare] 🔓 启用视频轨道:', event.track.id);
+          event.track.enabled = true;
+        }
+
+        // 直接使用setState
+        setState(prev => ({ ...prev, remoteStream: newStream }));
+
+        // 如果有视频元素引用，设置流
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = newStream;
+        }
+      } catch (error) {
+        console.error('[DesktopShare] ❌ 从轨道创建流失败:', error);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!webRTC) return;
+
+    const cleanup = webRTC.onTrack(handleRemoteTrack);
+    
+    // 返回清理函数
+    return () => {
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, [webRTC, handleRemoteTrack]); // 依赖 webRTC 和稳定的处理器函数
 
   // 获取桌面共享流
   const getDesktopStream = useCallback(async (): Promise<MediaStream> => {
