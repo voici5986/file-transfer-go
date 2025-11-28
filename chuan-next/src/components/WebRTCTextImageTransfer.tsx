@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useState, useCallback } from 'react';
-import { useURLHandler } from '@/hooks/ui';
-import { useWebRTCStore } from '@/hooks/ui/webRTCStore';
-import { WebRTCTextSender } from '@/components/webrtc/WebRTCTextSender';
-import { WebRTCTextReceiver } from '@/components/webrtc/WebRTCTextReceiver';
 import { Button } from '@/components/ui/button';
-import { MessageSquare, Send, Download, X } from 'lucide-react';
+import { WebRTCTextReceiver } from '@/components/webrtc/WebRTCTextReceiver';
+import { WebRTCTextSender } from '@/components/webrtc/WebRTCTextSender';
+import { useWebRTCStore } from '@/hooks/connection/state/webConnectStore';
+import { useURLHandler } from '@/hooks/ui';
+import { Download, Send, X } from 'lucide-react';
+import React, { useCallback, useState } from 'react';
 
 export const WebRTCTextImageTransfer: React.FC = () => {
   // 状态管理

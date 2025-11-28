@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useSharedWebRTCManager } from '@/hooks/connection';
-import { useTextTransferBusiness } from '@/hooks/text-transfer';
-import { useFileTransferBusiness } from '@/hooks/file-transfer';
+import { ConnectionStatus } from '@/components/ConnectionStatus';
+import RoomInfoDisplay from '@/components/RoomInfoDisplay';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast-simple';
-import { MessageSquare, Image, Send, Copy } from 'lucide-react';
-import RoomInfoDisplay from '@/components/RoomInfoDisplay';
-import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { useConnectManager } from '@/hooks/connection';
+import { useFileTransferBusiness } from '@/hooks/file-transfer';
+import { useTextTransferBusiness } from '@/hooks/text-transfer';
+import { Image, MessageSquare, Send } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 interface WebRTCTextSenderProps {
   onRestart?: () => void;
@@ -31,8 +31,10 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 创建共享连接
-  const connection = useSharedWebRTCManager();
-  
+  const connection = useConnectManager();
+
+  const { getConnectState } = connection;
+
   // 使用共享连接创建业务层
   const textTransfer = useTextTransferBusiness(connection);
   const fileTransfer = useFileTransferBusiness(connection);
@@ -43,9 +45,6 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
     // 只需要连接一次，因为使用的是共享连接
     await connection.connect(code, role);
   }, [connection]);
-
-  // 是否有任何连接
-  const hasAnyConnection = textTransfer.isConnected || fileTransfer.isConnected;
   
   // 是否正在连接
   const isAnyConnecting = textTransfer.isConnecting || fileTransfer.isConnecting;
@@ -55,10 +54,8 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
     if (onConnectionChange) {
       onConnectionChange(connection);
     }
-  }, [onConnectionChange, connection.isConnected, connection.isConnecting, connection.isPeerConnected]);
+  }, [onConnectionChange, getConnectState().isConnected, getConnectState().isConnecting, getConnectState().isPeerConnected]);
 
-  // 是否有任何错误
-  const hasAnyError = textTransfer.connectionError || fileTransfer.connectionError;
 
   // 重新开始
   const restart = () => {
@@ -140,7 +137,7 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
       // 如果有初始文本，发送它
       if (currentText) {
         setTimeout(() => {
-          if (connection.isPeerConnected && textTransfer.isConnected) {
+          if (getConnectState().isPeerConnected && textTransfer.isConnected) {
             // 发送实时文本同步
             textTransfer.sendTextSync(currentText);
             
@@ -171,7 +168,7 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
     textarea.style.height = `${newHeight}px`;
     
     // 实时同步文本内容（如果P2P连接已建立）
-    if (connection.isPeerConnected && textTransfer.isConnected) {
+    if (getConnectState().isPeerConnected && textTransfer.isConnected) {
       // 发送实时文本同步
       textTransfer.sendTextSync(value);
       
@@ -214,10 +211,10 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
     }]);
     
     // 发送文件
-    if (connection.isPeerConnected && fileTransfer.isConnected) {
+    if (getConnectState().isPeerConnected && fileTransfer.isConnected) {
       fileTransfer.sendFile(file);
       showToast('图片发送中...', "success");
-    } else if (!connection.isPeerConnected) {
+    } else if (!getConnectState().isPeerConnected) {
       showToast('等待对方加入P2P网络...', "error");
     } else {
       showToast('请先连接到房间', "error");
@@ -362,19 +359,18 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
                 )}
               </div>
             </div>
-            
             <textarea
               ref={textareaRef}
               value={textInput}
               onChange={handleTextInputChange}
               onPaste={handlePaste}
-              disabled={!connection.isPeerConnected}
-              placeholder={connection.isPeerConnected 
+              disabled={!getConnectState().isPeerConnected}
+              placeholder={getConnectState().isPeerConnected 
                 ? "在这里编辑文字内容...&#10;&#10;💡 支持实时同步编辑，对方可以看到你的修改&#10;💡 可以直接粘贴图片 (Ctrl+V)"
                 : "等待对方加入P2P网络...&#10;&#10;📡 建立连接后即可开始输入文字"
               }
               className={`w-full h-40 px-4 py-3 border rounded-lg resize-none text-slate-700 ${
-                connection.isPeerConnected 
+                getConnectState().isPeerConnected
                   ? "border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-400" 
                   : "border-slate-200 bg-slate-50 cursor-not-allowed placeholder-slate-300"
               }`}
@@ -386,9 +382,9 @@ export const WebRTCTextSender: React.FC<WebRTCTextSenderProps> = ({ onRestart, o
                   onClick={() => fileInputRef.current?.click()}
                   variant="outline"
                   size="sm"
-                  disabled={!connection.isPeerConnected}
+                  disabled={!getConnectState().isPeerConnected}
                   className={`flex items-center space-x-1 ${
-                    !connection.isPeerConnected ? 'cursor-not-allowed opacity-50' : ''
+                    !getConnectState().isPeerConnected ? 'cursor-not-allowed opacity-50' : ''
                   }`}
                 >
                   <Image className="w-4 h-4" />

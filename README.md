@@ -30,6 +30,8 @@
 - 🖥️ **多平台支持** - 支持linux/macos/win 单文件部署
 
 ## 🔄 最近更新日志
+### 2025-11-24
+- ✅ **共享桌面** -  共享桌面支持开启语音，提升实用性
 
 ### 2025-09-5
 - ✅ **WEBRTC链接恢复** - 关闭页面后在打开，进行数据链接恢复
@@ -179,6 +181,7 @@ make dev
 cd chuan-next && yarn && yarn dev
 ```
 
+
 ## 📄 许可证
 
 MIT License
@@ -192,3 +195,5 @@ MIT License
 [![Star History Chart](https://api.star-history.com/svg?repos=MatrixSeven/file-transfer-go&type=timeline)]
 
 </div>
+
+[![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")

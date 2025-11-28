@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 interface FileInfo {
   id: string;
@@ -7,6 +7,8 @@ interface FileInfo {
   type: string;
   status: 'ready' | 'downloading' | 'completed';
   progress: number;
+  transferSpeed?: number; // bytes per second
+  startTime?: number; // 传输开始时间
 }
 
 interface UseFileStateManagerProps {
@@ -35,10 +37,10 @@ export const useFileStateManager = ({
   const handleFileSelect = useCallback((files: File[]) => {
     console.log('=== 文件选择 ===');
     console.log('新文件:', files.map(f => f.name));
-    
+
     // 更新选中的文件
     setSelectedFiles(prev => [...prev, ...files]);
-    
+
     // 创建对应的文件信息
     const newFileInfos: FileInfo[] = files.map(file => ({
       id: generateFileId(),
@@ -48,7 +50,7 @@ export const useFileStateManager = ({
       status: 'ready',
       progress: 0
     }));
-    
+
     setFileList(prev => {
       const updatedList = [...prev, ...newFileInfos];
       console.log('更新后的文件列表:', updatedList);
@@ -72,21 +74,32 @@ export const useFileStateManager = ({
   }, []);
 
   // 更新文件状态
-  const updateFileStatus = useCallback((fileId: string, status: FileInfo['status'], progress?: number) => {
-    setFileList(prev => prev.map(item => 
-      item.id === fileId 
-        ? { ...item, status, progress: progress ?? item.progress }
+  const updateFileStatus = useCallback((fileId: string, status: FileInfo['status'], progress?: number, transferSpeed?: number) => {
+    setFileList(prev => prev.map(item =>
+      item.id === fileId
+        ? {
+          ...item,
+          status,
+          progress: progress ?? item.progress,
+          transferSpeed: transferSpeed ?? item.transferSpeed,
+          startTime: status === 'downloading' && !item.startTime ? Date.now() : item.startTime
+        }
         : item
     ));
   }, []);
 
   // 更新文件进度
-  const updateFileProgress = useCallback((fileId: string, fileName: string, progress: number) => {
+  const updateFileProgress = useCallback((fileId: string, fileName: string, progress: number, transferSpeed?: number) => {
     const newStatus = progress >= 100 ? 'completed' as const : 'downloading' as const;
     setFileList(prev => prev.map(item => {
       if (item.id === fileId || item.name === fileName) {
-        console.log(`更新文件 ${item.name} 进度: ${item.progress} -> ${progress}`);
-        return { ...item, progress, status: newStatus };
+        return {
+          ...item,
+          progress,
+          status: newStatus,
+          transferSpeed: transferSpeed ?? item.transferSpeed,
+          startTime: newStatus === 'downloading' && !item.startTime ? Date.now() : item.startTime
+        };
       }
       return item;
     }));
@@ -135,9 +148,9 @@ export const useFileStateManager = ({
       });
 
       // 检查文件列表是否真正发生变化
-      const fileListChanged = 
+      const fileListChanged =
         newFileInfos.length !== currentFileList.length ||
-        newFileInfos.some(newFile => 
+        newFileInfos.some(newFile =>
           !currentFileList.find(oldFile => oldFile.name === newFile.name && oldFile.size === newFile.size)
         );
 
@@ -146,7 +159,7 @@ export const useFileStateManager = ({
           before: currentFileList.map(f => f.name),
           after: newFileInfos.map(f => f.name)
         });
-        
+
         return newFileInfos;
       }
 
@@ -154,6 +167,20 @@ export const useFileStateManager = ({
       return currentFileList;
     });
   }, [selectedFiles, mode, pickupCode, generateFileId]); // 移除fileList依赖，避免无限循环
+
+  // 清除发送方数据（当接收方离开房间时）
+  const clearSenderData = useCallback(() => {
+    console.log('[FileStateManager] 接收方离开房间，清除发送方数据');
+    // 只清除文件列表和传输状态，不清除选中的文件
+    // 这样用户可以重新连接后继续发送
+    setFileList(prev => prev.map(file => ({
+      ...file,
+      status: 'ready' as const,
+      progress: 0,
+      transferSpeed: undefined,
+      startTime: undefined
+    })));
+  }, []);
 
   return {
     selectedFiles,
@@ -166,6 +193,7 @@ export const useFileStateManager = ({
     clearFiles,
     resetFiles,
     updateFileStatus,
-    updateFileProgress
+    updateFileProgress,
+    clearSenderData
   };
 };

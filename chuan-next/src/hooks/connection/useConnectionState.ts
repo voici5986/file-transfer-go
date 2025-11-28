@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/components/ui/toast-simple';
+import { useEffect, useState } from 'react';
 
 interface UseConnectionStateProps {
   isWebSocketConnected: boolean;

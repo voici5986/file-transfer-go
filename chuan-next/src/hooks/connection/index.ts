@@ -1,5 +1,8 @@
 // 连接相关的hooks
 export { useConnectionState } from './useConnectionState';
+export { useConnectManager } from './useConnectManager';
 export { useRoomConnection } from './useRoomConnection';
-export { useSharedWebRTCManager } from './useSharedWebRTCManager';
 export { useWebRTCSupport } from './useWebRTCSupport';
+
+
+

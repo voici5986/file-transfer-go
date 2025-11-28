@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useSharedWebRTCManager } from '@/hooks/connection';
-import { useTextTransferBusiness } from '@/hooks/text-transfer';
-import { useFileTransferBusiness } from '@/hooks/file-transfer';
+import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast-simple';
-import { MessageSquare, Image, Download } from 'lucide-react';
-import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { useConnectManager } from '@/hooks/connection';
+import { useFileTransferBusiness } from '@/hooks/file-transfer';
+import { useTextTransferBusiness } from '@/hooks/text-transfer';
+import { Download, Image, MessageSquare } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 interface WebRTCTextReceiverProps {
   initialCode?: string;
@@ -37,7 +37,9 @@ export const WebRTCTextReceiver: React.FC<WebRTCTextReceiverProps> = ({
   const hasTriedAutoConnect = useRef(false);
 
   // 创建共享连接
-  const connection = useSharedWebRTCManager();
+  const connection = useConnectManager();
+
+  const {getConnectState} = connection;
   
   // 使用共享连接创建业务层
   const textTransfer = useTextTransferBusiness(connection);
@@ -61,7 +63,7 @@ export const WebRTCTextReceiver: React.FC<WebRTCTextReceiverProps> = ({
     if (onConnectionChange) {
       onConnectionChange(connection);
     }
-  }, [onConnectionChange, connection.isConnected, connection.isConnecting, connection.isPeerConnected]);
+  }, [onConnectionChange, getConnectState().isConnected, getConnectState().isConnecting, getConnectState().isPeerConnected]);
 
   // 是否有任何错误
   const hasAnyError = textTransfer.connectionError || fileTransfer.connectionError;
@@ -336,7 +338,7 @@ export const WebRTCTextReceiver: React.FC<WebRTCTextReceiverProps> = ({
                 <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
                   <MessageSquare className="w-12 h-12 text-slate-300" />
                   <p className="text-center">
-                    {connection.isPeerConnected ? 
+                    {getConnectState().isPeerConnected ? 
                       '等待对方发送文字内容...' : 
                       '等待连接建立...'}
                   </p>

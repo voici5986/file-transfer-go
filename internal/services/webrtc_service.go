@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -146,18 +147,36 @@ func (ws *WebRTCService) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 
 	// 处理消息
 	for {
-		var msg WebRTCMessage
-		err := conn.ReadJSON(&msg)
+		// 首先读取原始消息类型和数据
+		messageType, data, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("读取WebRTC WebSocket消息失败: %v", err)
 			break
 		}
 
-		msg.From = clientID
-		log.Printf("收到WebRTC信令: 类型=%s, 来自=%s, 房间=%s", msg.Type, clientID, code)
+		if messageType == websocket.TextMessage {
+			// 文本消息，尝试解析为JSON
+			var msg WebRTCMessage
+			if err := json.Unmarshal(data, &msg); err != nil {
+				log.Printf("解析WebRTC JSON消息失败: %v", err)
+				continue
+			}
 
-		// 转发信令消息给对方
-		ws.forwardMessage(code, clientID, &msg)
+			msg.From = clientID
+			log.Printf("收到WebRTC信令: 类型=%s, 来自=%s, 房间=%s", msg.Type, clientID, code)
+
+			// 转发信令消息给对方
+			ws.forwardMessage(code, clientID, &msg)
+
+		} else if messageType == websocket.BinaryMessage {
+			// 二进制消息，直接转发
+			log.Printf("收到WebRTC二进制数据: 大小=%d bytes, 来自=%s, 房间=%s", len(data), clientID, code)
+
+			// 转发二进制数据给对方
+			ws.forwardBinaryMessage(code, clientID, data)
+		} else {
+			log.Printf("收到未知消息类型: %d", messageType)
+		}
 	}
 }
 
@@ -256,6 +275,37 @@ func (ws *WebRTCService) forwardMessage(roomCode string, fromClientID string, ms
 		}
 	} else {
 		log.Printf("目标客户端不在线，消息类型=%s", msg.Type)
+	}
+}
+
+// 转发二进制消息
+func (ws *WebRTCService) forwardBinaryMessage(roomCode string, fromClientID string, data []byte) {
+	ws.roomsMux.Lock()
+	defer ws.roomsMux.Unlock()
+
+	room := ws.rooms[roomCode]
+	if room == nil {
+		return
+	}
+
+	var targetClient *WebRTCClient
+	if room.Sender != nil && room.Sender.ID == fromClientID {
+		// 消息来自sender，转发给receiver
+		targetClient = room.Receiver
+	} else if room.Receiver != nil && room.Receiver.ID == fromClientID {
+		// 消息来自receiver，转发给sender
+		targetClient = room.Sender
+	}
+
+	if targetClient != nil && targetClient.Connection != nil {
+		err := targetClient.Connection.WriteMessage(websocket.BinaryMessage, data)
+		if err != nil {
+			log.Printf("转发WebRTC二进制数据失败: %v", err)
+		} else {
+			log.Printf("转发WebRTC二进制数据: 大小=%d bytes, 从=%s到=%s", len(data), fromClientID, targetClient.ID)
+		}
+	} else {
+		log.Printf("目标客户端不在线，无法转发二进制数据")
 	}
 }
 

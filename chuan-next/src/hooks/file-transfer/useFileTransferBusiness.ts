@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import type { WebRTCConnection } from '../connection/useSharedWebRTCManager';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { type IWebConnection } from '../connection/types';
+
 
 // 文件传输状态
 interface FileTransferState {
@@ -75,10 +76,19 @@ type FileProgressCallback = (progressInfo: { fileId: string; fileName: string; p
 type FileListReceivedCallback = (fileList: FileInfo[]) => void;
 
 const CHANNEL_NAME = 'file-transfer';
-const CHUNK_SIZE = 256 * 1024; // 256KB
+const WEBRTC_CHUNK_SIZE = 256 * 1024; // 256KB for WebRTC
+const WEBSOCKET_CHUNK_SIZE = 3 * 1024 * 1024; // 3MB for WebSocket
 const MAX_RETRIES = 5; // 最大重试次数
 const RETRY_DELAY = 1000; // 重试延迟（毫秒）
 const ACK_TIMEOUT = 5000; // 确认超时（毫秒）
+
+/**
+ * 根据连接类型获取块大小
+ */
+function getChunkSize(connectType: string): number {
+  return connectType === 'websocket' ? WEBSOCKET_CHUNK_SIZE : WEBRTC_CHUNK_SIZE;
+}
+
 
 /**
  * 计算数据的CRC32校验和
@@ -97,25 +107,12 @@ function calculateChecksum(data: ArrayBuffer): string {
   return (crc ^ 0xFFFFFFFF).toString(16).padStart(8, '0');
 }
 
-/**
- * 生成简单的校验和（备用方案）
- */
-function simpleChecksum(data: ArrayBuffer): string {
-  const buffer = new Uint8Array(data);
-  let sum = 0;
-
-  for (let i = 0; i < Math.min(buffer.length, 1000); i++) {
-    sum += buffer[i];
-  }
-
-  return sum.toString(16);
-}
 
 /**
  * 文件传输业务层
  * 必须传入共享的 WebRTC 连接
  */
-export function useFileTransferBusiness(connection: WebRTCConnection) {
+export function useFileTransferBusiness(connection: IWebConnection) {
 
   const [state, setState] = useState<FileTransferState>({
     isConnecting: false,
@@ -173,7 +170,7 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
         });
 
         // 初始化接收进度跟踪
-        const totalChunks = Math.ceil(metadata.size / CHUNK_SIZE);
+        const totalChunks = Math.ceil(metadata.size / getChunkSize(connection.connectType));
         receiveProgress.current.set(metadata.id, {
           fileId: metadata.id,
           fileName: metadata.name,
@@ -301,10 +298,10 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
 
       // 检查是否已经接收过这个块，避免重复计数
       const alreadyReceived = fileInfo.chunks[chunkIndex] !== undefined;
-      
+
       // 数据有效，保存到缓存
       fileInfo.chunks[chunkIndex] = data;
-      
+
       // 只有在首次接收时才增加计数
       if (!alreadyReceived) {
         fileInfo.receivedChunks++;
@@ -347,6 +344,7 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
   }, [updateState, connection]);
 
   const connectionRef = useRef(connection);
+
   useEffect(() => {
     connectionRef.current = connection;
   }, [connection]);
@@ -366,12 +364,12 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
   useEffect(() => {
     // 同步连接状态
     updateState({
-      isConnecting: connection.isConnecting,
-      isConnected: connection.isConnected,
-      isWebSocketConnected: connection.isWebSocketConnected,
-      connectionError: connection.error
+      isConnecting: connection.getConnectState().isConnecting,
+      isConnected: connection.getConnectState().isConnected,
+      isWebSocketConnected: connection.getConnectState().isWebSocketConnected,
+      connectionError: connection.getConnectState().error
     });
-  }, [connection.isConnecting, connection.isConnected, connection.isWebSocketConnected, connection.error, updateState]);
+  }, [connection.getConnectState, updateState]);
 
   // 连接
   const connect = useCallback((roomCode: string, role: 'sender' | 'receiver') => {
@@ -388,15 +386,15 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
   ): Promise<boolean> => {
     return new Promise((resolve) => {
       // 主要检查数据通道状态，因为数据通道是文件传输的实际通道
-      const channelState = connection.getChannelState();
-      if (channelState === 'closed') {
+      const channelState = connection.getConnectState();
+      if (channelState.state === 'closed') {
         console.warn(`数据通道已关闭，停止发送文件块 ${chunkIndex}`);
         resolve(false);
         return;
       }
 
       // 如果连接暂时断开但数据通道可用，仍然可以尝试发送
-      if (!connection.isConnected && channelState === 'connecting') {
+      if (!channelState.isConnected && channelState.state === 'connecting') {
         console.warn(`WebRTC 连接暂时断开，但数据通道正在连接，继续尝试发送文件块 ${chunkIndex}`);
       }
 
@@ -445,15 +443,16 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
 
   // 安全发送文件
   const sendFileSecure = useCallback(async (file: File, fileId?: string) => {
-    if (connection.getChannelState() !== 'open') {
+    if (connection.getConnectState().state !== 'open') {
       updateState({ error: '连接未就绪' });
       return;
     }
 
     const actualFileId = fileId || `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const chunkSize = getChunkSize(connection.connectType);
+    const totalChunks = Math.ceil(file.size / chunkSize);
 
-    console.log('开始安全发送文件:', file.name, '文件ID:', actualFileId, '总块数:', totalChunks);
+    console.log('开始安全发送文件:', file.name, '文件ID:', actualFileId, '总块数:', totalChunks, '块大小:', chunkSize);
 
     updateState({ isTransferring: true, progress: 0, error: null });
 
@@ -490,19 +489,19 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
 
         while (!success && retryCount <= MAX_RETRIES) {
           // 检查数据通道状态，这是文件传输的实际通道
-          const channelState = connection.getChannelState();
-          if (channelState === 'closed') {
+          const channelState = connection.getConnectState();
+          if (channelState.state === 'closed') {
             console.warn(`数据通道已关闭，停止文件传输`);
             throw new Error('数据通道已关闭');
           }
 
           // 如果连接暂时断开但数据通道可用，仍然可以尝试发送
-          if (!connection.isConnected && channelState === 'connecting') {
+          if (!connection.getConnectState().isConnected && channelState.state === 'connecting') {
             console.warn(`WebRTC 连接暂时断开，但数据通道正在连接，继续尝试发送文件块 ${chunkIndex}`);
           }
 
-          const start = chunkIndex * CHUNK_SIZE;
-          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const start = chunkIndex * chunkSize;
+          const end = Math.min(start + chunkSize, file.size);
           const chunk = file.slice(start, end);
           const arrayBuffer = await chunk.arrayBuffer();
           const checksum = calculateChecksum(arrayBuffer);
@@ -553,8 +552,8 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
 
         // 自适应流控：根据传输速度调整发送间隔
         if (status.averageSpeed > 0) {
-          const chunkSize = Math.min(CHUNK_SIZE, file.size - chunkIndex * CHUNK_SIZE);
-          const expectedTime = (chunkSize / 1024) / status.averageSpeed;
+          const currentChunkSize = Math.min(chunkSize, file.size - chunkIndex * chunkSize);
+          const expectedTime = (currentChunkSize / 1024) / status.averageSpeed;
           const actualTime = Date.now() - status.lastChunkTime;
           const delay = Math.max(0, expectedTime - actualTime);
 
@@ -598,41 +597,88 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
   // 发送文件列表
   const sendFileList = useCallback((fileList: FileInfo[]) => {
     // 检查连接状态 - 优先检查数据通道状态，因为 P2P 连接可能已经建立但状态未及时更新
-    const channelState = connection.getChannelState();
-    const peerConnected = connection.isPeerConnected;
+    const channelState = connection.getConnectState();
+    const peerConnected = channelState.isPeerConnected;
+    const dataChannelConnected = channelState.isDataChannelConnected;
+    const channelReadyState = channelState.state;
 
     console.log('发送文件列表检查:', {
       channelState,
       peerConnected,
+      dataChannelConnected,
+      channelReadyState,
       fileListLength: fileList.length
     });
 
-    // 如果数据通道已打开或者 P2P 已连接，就可以发送文件列表
-    if (channelState === 'open' || peerConnected) {
-      console.log('发送文件列表:', fileList);
+    // 使用更宽松的条件检查连接状态
+    const isReadyToSend = channelReadyState === 'open' ||
+      dataChannelConnected ||
+      peerConnected ||
+      channelState.isConnected;
 
-      connection.sendMessage({
+    if (isReadyToSend) {
+      console.log('发送文件列表:', fileList.map(f => f.name));
+
+      const sendResult = connection.sendMessage({
         type: 'file-list',
         payload: fileList
       }, CHANNEL_NAME);
+
+      if (!sendResult) {
+        console.warn('文件列表发送失败，可能是数据通道未准备好');
+        // 不立即重试，让上层逻辑处理重试
+      }
     } else {
-      console.log('P2P连接未建立，等待连接后再发送文件列表');
+      console.log('连接未就绪，等待连接后再发送文件列表:', {
+        channelReadyState,
+        dataChannelConnected,
+        peerConnected,
+        isConnected: channelState.isConnected
+      });
     }
   }, [connection]);
 
   // 请求文件
   const requestFile = useCallback((fileId: string, fileName: string) => {
-    if (connection.getChannelState() !== 'open') {
-      console.error('数据通道未准备就绪，无法请求文件');
+    const channelState = connection.getConnectState();
+    const isChannelOpen = channelState.state === 'open';
+    const isDataChannelConnected = channelState.isDataChannelConnected;
+    const isPeerConnected = channelState.isPeerConnected;
+    const isConnected = channelState.isConnected;
+
+    console.log('请求文件前检查连接状态:', {
+      fileName,
+      fileId,
+      isChannelOpen,
+      isDataChannelConnected,
+      isPeerConnected,
+      isConnected
+    });
+
+    // 使用更宽松的条件检查连接状态
+    const isReadyToRequest = isChannelOpen || isDataChannelConnected || isPeerConnected || isConnected;
+
+    if (!isReadyToRequest) {
+      console.error('数据通道未准备就绪，无法请求文件:', {
+        isChannelOpen,
+        isDataChannelConnected,
+        isPeerConnected,
+        isConnected
+      });
       return;
     }
 
-    console.log('请求文件:', fileName, fileId);
+    console.log('发送文件请求:', fileName, fileId);
 
-    connection.sendMessage({
+    const sendResult = connection.sendMessage({
       type: 'file-request',
       payload: { fileId, fileName }
     }, CHANNEL_NAME);
+
+    if (!sendResult) {
+      console.error('文件请求发送失败，可能是数据通道问题');
+      // 不立即重试，让上层逻辑处理重试
+    }
   }, [connection]);
 
   // 注册回调函数
@@ -656,6 +702,38 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
     return () => { fileListCallbacks.current.delete(callback); };
   }, []);
 
+  // 清除发送方数据
+  const clearSenderData = useCallback(() => {
+    console.log('[FileTransferBusiness] 清除发送方数据');
+
+    // 清除传输状态
+    transferStatus.current.clear();
+
+    // 清除待处理的块
+    pendingChunks.current.forEach(timeout => clearTimeout(timeout));
+    pendingChunks.current.clear();
+
+    // 清除块确认回调
+    chunkAckCallbacks.current.clear();
+
+    // 重置状态
+    updateState({
+      isTransferring: false,
+      progress: 0,
+      error: null
+    });
+  }, [updateState]);
+
+  // 设置断开连接回调
+  useEffect(() => {
+    connection.setOnDisconnectCallback(clearSenderData);
+
+    return () => {
+      // 清理回调
+      connection.setOnDisconnectCallback(() => { });
+    };
+  }, [connection, clearSenderData]);
+
   return {
     // 文件传输状态（包括连接状态）
     ...state,
@@ -666,6 +744,7 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
     sendFile,
     sendFileList,
     requestFile,
+    clearSenderData,
 
     // 回调注册
     onFileReceived,

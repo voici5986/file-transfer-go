@@ -26,16 +26,17 @@ const getCurrentBaseUrl = () => {
 
 // 动态获取 WebSocket URL - 总是在客户端运行时计算
 const getCurrentWsUrl = () => {
+  // return "ws://192.168.1.120:8080"
   if (typeof window !== 'undefined') {
     // 检查是否是 Next.js 开发服务器（端口 3000 或 3001）
-    const isNextDevServer = window.location.hostname === 'localhost' && 
-                           (window.location.port === '3000' || window.location.port === '3001');
-    
+    const isNextDevServer = window.location.hostname === 'localhost' &&
+      (window.location.port === '3000' || window.location.port === '3001');
+
     if (isNextDevServer) {
       // 开发模式：通过 Next.js 开发服务器访问，连接到后端 WebSocket
       return 'ws://localhost:8080';
     }
-    
+
     // 生产模式或通过 Go 服务器访问：使用当前域名和端口
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}`;
@@ -49,28 +50,28 @@ export const config = {
   isDev: getEnv('NODE_ENV') === 'development',
   isProd: getEnv('NODE_ENV') === 'production',
   isStatic: typeof window !== 'undefined', // 客户端运行时认为是静态模式
-  
+
   // API配置
   api: {
     // 后端API地址 (服务器端使用)
     backendUrl: getEnv('GO_BACKEND_URL', 'http://localhost:8080'),
-    
+
     // 前端API基础URL (客户端使用) - 开发模式下调用 Next.js API 路由
     baseUrl: getEnv('NEXT_PUBLIC_API_BASE_URL', 'http://localhost:3000'),
-    
+
     // 直接后端URL (客户端在静态模式下使用) - 如果环境变量为空，则使用当前域名
     directBackendUrl: getEnv('NEXT_PUBLIC_BACKEND_URL') || getCurrentBaseUrl(),
-    
+
     // WebSocket地址 - 在客户端运行时动态计算，不在构建时预设
     wsUrl: '', // 将通过 getWsUrl() 函数动态获取
   },
-  
+
   // 超时配置
   timeout: {
     api: 30000, // 30秒
     ws: 60000,  // 60秒
   },
-  
+
   // 重试配置
   retry: {
     max: 3,
@@ -122,12 +123,12 @@ export function getWsUrl(): string {
   if (envWsUrl) {
     return envWsUrl;
   }
-  
+
   // 如果是服务器端（SSG构建时），返回空字符串
   if (typeof window === 'undefined') {
     return '';
   }
-  
+
   // 客户端运行时动态计算
   return getCurrentWsUrl();
 }

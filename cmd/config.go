@@ -14,6 +14,16 @@ import (
 type Config struct {
 	Port        int
 	FrontendDir string
+	TurnConfig  TurnConfig
+}
+
+// TurnConfig TURN服务器配置
+type TurnConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Realm    string `json:"realm"`
 }
 
 // loadEnvFile 加载环境变量文件
@@ -64,6 +74,11 @@ func showHelp() {
 	fmt.Println("  环境变量:")
 	fmt.Println("    PORT=8080              - 服务器监听端口")
 	fmt.Println("    FRONTEND_DIR=/path     - 外部前端文件目录 (可选)")
+	fmt.Println("    TURN_ENABLED=true      - 启用TURN服务器")
+	fmt.Println("    TURN_PORT=3478         - TURN服务器端口")
+	fmt.Println("    TURN_USERNAME=user     - TURN服务器用户名")
+	fmt.Println("    TURN_PASSWORD=pass     - TURN服务器密码")
+	fmt.Println("    TURN_REALM=localhost   - TURN服务器域")
 	fmt.Println("  命令行参数:")
 	flag.PrintDefaults()
 	fmt.Println("")
@@ -73,6 +88,7 @@ func showHelp() {
 	fmt.Println("  ./file-transfer-server")
 	fmt.Println("  ./file-transfer-server -port 3000")
 	fmt.Println("  PORT=8080 FRONTEND_DIR=./dist ./file-transfer-server")
+	fmt.Println("  TURN_ENABLED=true TURN_PORT=3478 ./file-transfer-server")
 }
 
 // loadConfig 加载应用配置
@@ -90,6 +106,27 @@ func loadConfig() *Config {
 		}
 	}
 
+	// TURN 配置默认值
+	turnEnabled := os.Getenv("TURN_ENABLED") == "true"
+	turnPort := 3478
+	if envTurnPort := os.Getenv("TURN_PORT"); envTurnPort != "" {
+		if port, err := strconv.Atoi(envTurnPort); err == nil {
+			turnPort = port
+		}
+	}
+	turnUsername := os.Getenv("TURN_USERNAME")
+	if turnUsername == "" {
+		turnUsername = "chuan"
+	}
+	turnPassword := os.Getenv("TURN_PASSWORD")
+	if turnPassword == "" {
+		turnPassword = "chuan123"
+	}
+	turnRealm := os.Getenv("TURN_REALM")
+	if turnRealm == "" {
+		turnRealm = "localhost"
+	}
+
 	// 定义命令行参数
 	var port = flag.Int("port", defaultPort, "服务器监听端口 (可通过 PORT 环境变量设置)")
 	var help = flag.Bool("help", false, "显示帮助信息")
@@ -104,6 +141,13 @@ func loadConfig() *Config {
 	config := &Config{
 		Port:        *port,
 		FrontendDir: os.Getenv("FRONTEND_DIR"),
+		TurnConfig: TurnConfig{
+			Enabled:  turnEnabled,
+			Port:     turnPort,
+			Username: turnUsername,
+			Password: turnPassword,
+			Realm:    turnRealm,
+		},
 	}
 
 	return config
@@ -120,5 +164,15 @@ func logConfig(config *Config) {
 		}
 	} else {
 		log.Printf("📦 使用内嵌前端文件")
+	}
+
+	// 记录 TURN 配置信息
+	if config.TurnConfig.Enabled {
+		log.Printf("🔄 TURN服务器已启用")
+		log.Printf("   端口: %d", config.TurnConfig.Port)
+		log.Printf("   用户名: %s", config.TurnConfig.Username)
+		log.Printf("   域: %s", config.TurnConfig.Realm)
+	} else {
+		log.Printf("❌ TURN服务器已禁用")
 	}
 }

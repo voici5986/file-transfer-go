@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
 import { useToast } from '@/components/ui/toast-simple';
-import { useWebRTCStore } from './webRTCStore';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useWebRTCStore } from '../connection/state/webConnectStore';
 import { useConfirmDialog } from './useConfirmDialog';
 
 // 支持的功能类型
