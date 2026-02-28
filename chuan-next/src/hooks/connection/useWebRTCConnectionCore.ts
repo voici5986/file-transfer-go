@@ -2,7 +2,7 @@
 import { useRef, useCallback } from 'react';
 import { getWsUrl } from '@/lib/config';
 import { getIceServersConfig } from '../settings/useIceServersConfig';
-import { WebRTCStateManager } from './useWebRTCStateManager';
+import { WebRTCStateManager } from '../ui/webRTCStore';
 import { WebRTCDataChannelManager, WebRTCMessage } from './useWebRTCDataChannelManager';
 import { WebRTCTrackManager } from './useWebRTCTrackManager';
 

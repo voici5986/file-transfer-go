@@ -1,5 +1,5 @@
-import { useCallback } from 'react';
-import { useWebRTCStateManager } from './useWebRTCStateManager';
+import { useCallback, useMemo } from 'react';
+import { useWebRTCStore, type WebRTCStateManager } from '../ui/webRTCStore';
 import { useWebRTCDataChannelManager, WebRTCMessage } from './useWebRTCDataChannelManager';
 import { useWebRTCTrackManager } from './useWebRTCTrackManager';
 import { useWebRTCConnectionCore } from './useWebRTCConnectionCore';
@@ -50,8 +50,27 @@ export interface WebRTCConnection {
  * 整合所有模块，提供统一的接口
  */
 export function useSharedWebRTCManager(): WebRTCConnection {
-  // 创建各个管理器实例
-  const stateManager = useWebRTCStateManager();
+  // 直接从 zustand store 创建状态管理器
+  const store = useWebRTCStore();
+  const stateManager: WebRTCStateManager = useMemo(() => ({
+    getState: () => ({
+      isConnected: store.isConnected,
+      isConnecting: store.isConnecting,
+      isWebSocketConnected: store.isWebSocketConnected,
+      isPeerConnected: store.isPeerConnected,
+      error: store.error,
+      canRetry: store.canRetry,
+      currentRoom: store.currentRoom,
+    }),
+    updateState: store.updateState,
+    setCurrentRoom: store.setCurrentRoom,
+    resetToInitial: store.resetToInitial,
+    isConnectedToRoom: (roomCode: string, role: 'sender' | 'receiver') =>
+      store.currentRoom?.code === roomCode &&
+      store.currentRoom?.role === role &&
+      store.isConnected,
+  }), [store]);
+
   const dataChannelManager = useWebRTCDataChannelManager(stateManager);
   const trackManager = useWebRTCTrackManager(stateManager);
   const connectionCore = useWebRTCConnectionCore(
@@ -60,8 +79,15 @@ export function useSharedWebRTCManager(): WebRTCConnection {
     trackManager
   );
 
-  // 获取当前状态
-  const state = stateManager.getState();
+  // 从 store 获取当前状态
+  const state = {
+    isConnected: store.isConnected,
+    isConnecting: store.isConnecting,
+    isWebSocketConnected: store.isWebSocketConnected,
+    isPeerConnected: store.isPeerConnected,
+    error: store.error,
+    canRetry: store.canRetry,
+  };
 
   // 创建 createOfferNow 方法
   const createOfferNow = useCallback(async () => {

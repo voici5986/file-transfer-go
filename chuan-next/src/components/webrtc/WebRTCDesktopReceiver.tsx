@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/toast-simple';
 import { useDesktopShareBusiness } from '@/hooks/desktop-share';
 import DesktopViewer from '@/components/DesktopViewer';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { validateRoomCode, checkRoomStatus, handleNetworkError } from '@/lib/room-utils';
 
 interface WebRTCDesktopReceiverProps {
   className?: string;
@@ -37,8 +38,9 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
     const trimmedCode = inputCode.trim();
     
     // 检查房间代码格式
-    if (!trimmedCode || trimmedCode.length !== 6) {
-      showToast('请输入正确的6位房间代码', "error");
+    const validationError = validateRoomCode(trimmedCode);
+    if (validationError) {
+      showToast(validationError, "error");
       return;
     }
 
@@ -53,35 +55,9 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
     try {
       console.log('[DesktopShareReceiver] 开始验证房间状态...');
       
-      // 先检查房间状态
-      const response = await fetch(`/api/room-info?code=${trimmedCode}`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: 无法检查房间状态`);
-      }
-      
-      const result = await response.json();
-      
+      const result = await checkRoomStatus(trimmedCode);
       if (!result.success) {
-        let errorMessage = result.message || '房间不存在或已过期';
-        if (result.message?.includes('expired')) {
-          errorMessage = '房间已过期，请联系发送方重新创建';
-        } else if (result.message?.includes('not found')) {
-          errorMessage = '房间不存在，请检查房间代码是否正确';
-        }
-        showToast(errorMessage, "error");
-        return;
-      }
-      
-      // 检查房间是否已满
-      if (result.is_room_full) {
-        showToast('当前房间人数已满，正在传输中无法加入，请稍后再试', "error");
-        return;
-      }
-      
-      // 检查发送方是否在线
-      if (!result.sender_online) {
-        showToast('发送方不在线，请确认房间代码是否正确或联系发送方', "error");
+        showToast(result.error || '房间验证失败', "error");
         return;
       }
       
@@ -94,26 +70,11 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
       showToast('已加入桌面共享', 'success');
     } catch (error) {
       console.error('[DesktopShareReceiver] 加入观看失败:', error);
-      
-      let errorMessage = '加入观看失败';
-      if (error instanceof Error) {
-        if (error.message.includes('network') || error.message.includes('fetch')) {
-          errorMessage = '网络连接失败，请检查网络状况';
-        } else if (error.message.includes('timeout')) {
-          errorMessage = '请求超时，请重试';
-        } else if (error.message.includes('HTTP 404')) {
-          errorMessage = '房间不存在，请检查房间代码';
-        } else if (error.message.includes('HTTP 500')) {
-          errorMessage = '服务器错误，请稍后重试';
-        } else {
-          errorMessage = error.message;
-        }
-      }
-      
+      const errorMessage = error instanceof Error ? handleNetworkError(error) : '加入观看失败';
       showToast(errorMessage, 'error');
     } finally {
       setIsLoading(false);
-      setIsJoiningRoom(false); // 重置加入房间状态
+      setIsJoiningRoom(false);
     }
   }, [desktopShare, inputCode, isJoiningRoom, showToast]);
 
@@ -148,8 +109,9 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
         const trimmedCode = initialCode.trim();
         
         // 检查房间代码格式
-        if (!trimmedCode || trimmedCode.length !== 6) {
-          showToast('房间代码格式不正确', "error");
+        const validationError = validateRoomCode(trimmedCode);
+        if (validationError) {
+          showToast(validationError, "error");
           return;
         }
         
@@ -157,36 +119,11 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
         console.log('[WebRTCDesktopReceiver] 检测到初始代码，开始验证并自动加入:', trimmedCode);
         
         try {
-          // 先检查房间状态
           console.log('[WebRTCDesktopReceiver] 验证房间状态...');
-          const response = await fetch(`/api/room-info?code=${trimmedCode}`);
-          
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: 无法检查房间状态`);
-          }
-          
-          const result = await response.json();
+          const result = await checkRoomStatus(trimmedCode);
           
           if (!result.success) {
-            let errorMessage = result.message || '房间不存在或已过期';
-            if (result.message?.includes('expired')) {
-              errorMessage = '房间已过期，请联系发送方重新创建';
-            } else if (result.message?.includes('not found')) {
-              errorMessage = '房间不存在，请检查房间代码是否正确';
-            }
-            showToast(errorMessage, "error");
-            return;
-          }
-          
-          // 检查房间是否已满
-          if (result.is_room_full) {
-            showToast('当前房间人数已满，正在传输中无法加入，请稍后再试', "error");
-            return;
-          }
-          
-          // 检查发送方是否在线
-          if (!result.sender_online) {
-            showToast('发送方不在线，请确认房间代码是否正确或联系发送方', "error");
+            showToast(result.error || '房间验证失败', "error");
             return;
           }
           
@@ -198,22 +135,7 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
           showToast('已加入桌面共享', 'success');
         } catch (error) {
           console.error('[WebRTCDesktopReceiver] 自动加入观看失败:', error);
-          
-          let errorMessage = '自动加入观看失败';
-          if (error instanceof Error) {
-            if (error.message.includes('network') || error.message.includes('fetch')) {
-              errorMessage = '网络连接失败，请检查网络状况';
-            } else if (error.message.includes('timeout')) {
-              errorMessage = '请求超时，请重试';
-            } else if (error.message.includes('HTTP 404')) {
-              errorMessage = '房间不存在，请检查房间代码';
-            } else if (error.message.includes('HTTP 500')) {
-              errorMessage = '服务器错误，请稍后重试';
-            } else {
-              errorMessage = error.message;
-            }
-          }
-          
+          const errorMessage = error instanceof Error ? handleNetworkError(error) : '自动加入观看失败';
           showToast(errorMessage, 'error');
         } finally {
           setIsLoading(false);

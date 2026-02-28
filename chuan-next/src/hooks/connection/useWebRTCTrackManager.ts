@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { WebRTCStateManager } from './useWebRTCStateManager';
+import { WebRTCStateManager } from '../ui/webRTCStore';
 
 /**
  * WebRTC 媒体轨道管理器

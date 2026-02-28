@@ -5,16 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Upload, FileText, Image, Video, Music, Archive, X } from 'lucide-react';
 import RoomInfoDisplay from '@/components/RoomInfoDisplay';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
-
-
-interface FileInfo {
-  id: string;
-  name: string;
-  size: number;
-  type: string;
-  status: 'ready' | 'downloading' | 'completed';
-  progress: number;
-}
+import type { FileInfo } from '@/types';
 
 const getFileIcon = (mimeType: string) => {
   if (mimeType.startsWith('image/')) return <Image className="w-5 h-5 text-white" />;

@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast-simple';
 import { MessageSquare, Image, Download } from 'lucide-react';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { checkRoomStatus } from '@/lib/room-utils';
 
 interface WebRTCTextReceiverProps {
   initialCode?: string;
@@ -136,39 +137,22 @@ export const WebRTCTextReceiver: React.FC<WebRTCTextReceiverProps> = ({
     try {
       console.log('=== 开始加入房间 ===', code);
       
-      // 验证房间
-      const response = await fetch(`/api/room-info?code=${code}`);
-      const roomData = await response.json();
-      
-      if (!response.ok) {
-        let errorMessage = roomData.error || '房间不存在或已过期';
-        
-        // 特殊处理房间人数已满的情况
-        if (roomData.message?.includes('房间人数已满') || roomData.message?.includes('正在传输中无法加入')) {
-          errorMessage = '当前房间人数已满，正在传输中无法加入，请稍后再试';
-        } else if (roomData.message?.includes('expired')) {
-          errorMessage = '房间已过期，请联系发送方重新创建';
-        } else if (roomData.message?.includes('not found')) {
-          errorMessage = '房间不存在，请检查取件码是否正确';
-        }
-        
-        throw new Error(errorMessage);
-      }
-      
-      // 检查房间是否已满
-      if (roomData.is_room_full) {
-        throw new Error('当前房间人数已满，正在传输中无法加入，请稍后再试');
+      const result = await checkRoomStatus(code);
+      if (!result.success) {
+        showToast(result.error || '加入房间失败', "error");
+        return;
       }
 
-      console.log('=== 房间验证成功 ===', roomData);
+      console.log('=== 房间验证成功 ===');
       setPickupCode(code);
       
       // 连接到房间
       await connectAll(code, 'receiver');
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('加入房间失败:', error);
-      showToast(error.message || '加入房间失败', "error");
+      const message = error instanceof Error ? error.message : '加入房间失败';
+      showToast(message, "error");
     } finally {
       setIsValidating(false);
     }

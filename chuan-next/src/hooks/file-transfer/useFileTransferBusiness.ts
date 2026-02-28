@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { WebRTCConnection } from '../connection/useSharedWebRTCManager';
+import type { FileInfo } from '@/types';
 
 // 文件传输状态
 interface FileTransferState {
@@ -18,16 +19,6 @@ interface FileReceiveProgress {
   fileId: string;
   fileName: string;
   totalChunks: number;
-  progress: number;
-}
-
-// 文件信息
-interface FileInfo {
-  id: string;
-  name: string;
-  size: number;
-  type: string;
-  status: 'ready' | 'downloading' | 'completed';
   progress: number;
 }
 

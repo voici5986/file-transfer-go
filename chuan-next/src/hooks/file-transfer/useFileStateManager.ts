@@ -1,13 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-
-interface FileInfo {
-  id: string;
-  name: string;
-  size: number;
-  type: string;
-  status: 'ready' | 'downloading' | 'completed';
-  progress: number;
-}
+import type { FileInfo } from '@/types';
 
 interface UseFileStateManagerProps {
   mode: 'send' | 'receive';

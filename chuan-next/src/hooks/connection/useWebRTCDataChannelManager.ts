@@ -1,5 +1,5 @@
 import { useRef, useCallback } from 'react';
-import { WebRTCStateManager } from './useWebRTCStateManager';
+import { WebRTCStateManager } from '../ui/webRTCStore';
 
 // 消息类型
 export interface WebRTCMessage {
