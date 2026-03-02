@@ -14,16 +14,25 @@ export type DataHandler = (data: ArrayBuffer) => void;
 
 /**
  * WebRTC 数据通道管理器
- * 负责数据通道的创建和管理
+ * 负责数据通道的创建和管理，支持 P2P DataChannel 和 WS Relay 两种传输模式
  */
 export interface WebRTCDataChannelManager {
-  // 创建数据通道
+  // 创建数据通道 (P2P 模式)
   createDataChannel: (pc: RTCPeerConnection, role: 'sender' | 'receiver', isReconnect?: boolean) => void;
   
-  // 发送消息
+  // 切换到 WS 中继模式（仅设置发送引用，不设置事件监听）
+  switchToRelay: (relayWs: WebSocket) => void;
+  
+  // 关闭中继连接
+  closeRelay: () => void;
+  
+  // 处理中继收到的数据消息（由 ConnectionCore 的 onmessage 调用）
+  handleRelayMessage: (event: MessageEvent) => void;
+  
+  // 发送消息（自动选择可用通道）
   sendMessage: (message: WebRTCMessage, channel?: string) => boolean;
   
-  // 发送二进制数据
+  // 发送二进制数据（自动选择可用通道）
   sendData: (data: ArrayBuffer) => boolean;
   
   // 注册消息处理器
@@ -32,27 +41,40 @@ export interface WebRTCDataChannelManager {
   // 注册数据处理器
   registerDataHandler: (channel: string, handler: DataHandler) => () => void;
   
-  // 获取数据通道状态
+  // 获取数据通道状态（兼容 RTCDataChannelState）
   getChannelState: () => RTCDataChannelState;
   
-  // 处理数据通道消息
+  // 处理数据通道消息 (P2P)
   handleDataChannelMessage: (event: MessageEvent) => void;
 }
 
 /**
  * WebRTC 数据通道管理 Hook
  * 负责数据通道的创建和管理，处理数据通道消息的发送和接收
+ * 支持 P2P DataChannel 和 WS Relay 两种传输模式，对上层透明
  */
 export function useWebRTCDataChannelManager(
   stateManager: WebRTCStateManager
 ): WebRTCDataChannelManager {
   const dcRef = useRef<RTCDataChannel | null>(null);
+  // WS 中继通道
+  const relayWsRef = useRef<WebSocket | null>(null);
   
   // 多通道消息处理器
   const messageHandlers = useRef<Map<string, MessageHandler>>(new Map());
   const dataHandlers = useRef<Map<string, DataHandler>>(new Map());
 
-  // 创建数据通道
+  // 判断当前是否处于中继模式
+  const isRelayMode = useCallback(() => {
+    return relayWsRef.current !== null && relayWsRef.current.readyState === WebSocket.OPEN;
+  }, []);
+
+  // 判断 P2P 数据通道是否可用
+  const isP2PAvailable = useCallback(() => {
+    return dcRef.current !== null && dcRef.current.readyState === 'open';
+  }, []);
+
+  // 创建数据通道 (P2P 模式)
   const createDataChannel = useCallback((
     pc: RTCPeerConnection, 
     role: 'sender' | 'receiver', 
@@ -77,6 +99,13 @@ export function useWebRTCDataChannelManager(
 
       dataChannel.onopen = () => {
         console.log('[DataChannelManager] 数据通道已打开 (发送方)');
+        // 如果之前在中继模式，切回 P2P
+        if (relayWsRef.current) {
+          console.log('[DataChannelManager] P2P 恢复，关闭中继通道');
+          relayWsRef.current.close();
+          relayWsRef.current = null;
+          stateManager.updateState({ transportMode: 'p2p' });
+        }
         // 确保所有连接状态都正确更新
         stateManager.updateState({
           isWebSocketConnected: true,
@@ -90,7 +119,6 @@ export function useWebRTCDataChannelManager(
         // 如果是重新连接，触发数据同步
         if (isReconnect) {
           console.log('[DataChannelManager] 发送方重新连接，数据通道已打开，准备同步数据');
-          // 发送同步请求消息
           setTimeout(() => {
             if (dataChannel.readyState === 'open') {
               dataChannel.send(JSON.stringify({
@@ -99,7 +127,7 @@ export function useWebRTCDataChannelManager(
               }));
               console.log('[DataChannelManager] 发送方发送数据同步请求');
             }
-          }, 300); // 等待数据通道完全稳定
+          }, 300);
         }
       };
     
@@ -109,11 +137,9 @@ export function useWebRTCDataChannelManager(
       dataChannel.onerror = (error) => {
         console.error('[DataChannelManager] 数据通道错误:', error);
         
-        // 获取更详细的错误信息
         let errorMessage = '数据通道连接失败';
         let shouldRetry = false;
         
-        // 根据数据通道状态提供更具体的错误信息
         switch (dataChannel.readyState) {
           case 'connecting':
             errorMessage = '数据通道正在连接中，请稍候...';
@@ -127,7 +153,6 @@ export function useWebRTCDataChannelManager(
             shouldRetry = true;
             break;
           default:
-            // 检查PeerConnection状态
             if (pc) {
               switch (pc.connectionState) {
                 case 'failed':
@@ -147,12 +172,15 @@ export function useWebRTCDataChannelManager(
         
         console.error(`[DataChannelManager] 数据通道详细错误 - 状态: ${dataChannel.readyState}, 消息: ${errorMessage}, 建议重试: ${shouldRetry}`);
         
-        stateManager.updateState({
-          error: errorMessage,
-          isConnecting: false,
-          isPeerConnected: false,  // 数据通道出错时，P2P连接肯定不可用
-          canRetry: shouldRetry    // 设置是否可以重试
-        });
+        // 如果已经在中继模式，不更新错误状态
+        if (!isRelayMode()) {
+          stateManager.updateState({
+            error: errorMessage,
+            isConnecting: false,
+            isPeerConnected: false,
+            canRetry: shouldRetry
+          });
+        }
       };
     } else {
       pc.ondatachannel = (event) => {
@@ -161,7 +189,13 @@ export function useWebRTCDataChannelManager(
 
         dataChannel.onopen = () => {
           console.log('[DataChannelManager] 数据通道已打开 (接收方)');
-          // 确保所有连接状态都正确更新
+          // 如果之前在中继模式，切回 P2P
+          if (relayWsRef.current) {
+            console.log('[DataChannelManager] P2P 恢复，关闭中继通道');
+            relayWsRef.current.close();
+            relayWsRef.current = null;
+            stateManager.updateState({ transportMode: 'p2p' });
+          }
           stateManager.updateState({
             isWebSocketConnected: true,
             isConnected: true,
@@ -171,10 +205,8 @@ export function useWebRTCDataChannelManager(
             canRetry: false
           });
           
-          // 如果是重新连接，触发数据同步
           if (isReconnect) {
             console.log('[DataChannelManager] 接收方重新连接，数据通道已打开，准备同步数据');
-            // 发送同步请求消息
             setTimeout(() => {
               if (dataChannel.readyState === 'open') {
                 dataChannel.send(JSON.stringify({
@@ -183,7 +215,7 @@ export function useWebRTCDataChannelManager(
                 }));
                 console.log('[DataChannelManager] 接收方发送数据同步请求');
               }
-            }, 300); // 等待数据通道完全稳定
+            }, 300);
           }
         };
 
@@ -192,11 +224,9 @@ export function useWebRTCDataChannelManager(
         dataChannel.onerror = (error) => {
           console.error('[DataChannelManager] 数据通道错误 (接收方):', error);
           
-          // 获取更详细的错误信息
           let errorMessage = '数据通道连接失败';
           let shouldRetry = false;
           
-          // 根据数据通道状态提供更具体的错误信息
           switch (dataChannel.readyState) {
             case 'connecting':
               errorMessage = '数据通道正在连接中，请稍候...';
@@ -210,7 +240,6 @@ export function useWebRTCDataChannelManager(
               shouldRetry = true;
               break;
             default:
-              // 检查PeerConnection状态
               if (pc) {
                 switch (pc.connectionState) {
                   case 'failed':
@@ -230,12 +259,15 @@ export function useWebRTCDataChannelManager(
           
           console.error(`[DataChannelManager] 数据通道详细错误 (接收方) - 状态: ${dataChannel.readyState}, 消息: ${errorMessage}, 建议重试: ${shouldRetry}`);
           
-          stateManager.updateState({
-            error: errorMessage,
-            isConnecting: false,
-            isPeerConnected: false,  // 数据通道出错时，P2P连接肯定不可用
-            canRetry: shouldRetry    // 设置是否可以重试
-          });
+          // 如果已经在中继模式，不更新错误状态
+          if (!isRelayMode()) {
+            stateManager.updateState({
+              error: errorMessage,
+              isConnecting: false,
+              isPeerConnected: false,
+              canRetry: shouldRetry
+            });
+          }
         };
       };
     }
@@ -243,21 +275,81 @@ export function useWebRTCDataChannelManager(
     console.log('[DataChannelManager] 数据通道创建完成，角色:', role, '是否重新连接:', isReconnect);
   }, [stateManager]);
 
-  // 处理数据通道消息
-  const handleDataChannelMessage = useCallback((event: MessageEvent) => {
+  // 切换到 WS 中继模式 - 仅设置发送引用
+  // 事件监听由 ConnectionCore 的 initiateRelayFallback 统一管理
+  const switchToRelay = useCallback((relayWs: WebSocket) => {
+    console.log('[DataChannelManager] 🔄 切换到 WS 中继模式（设置发送引用）');
+    relayWsRef.current = relayWs;
+  }, []);
+
+  // 关闭中继连接
+  const closeRelay = useCallback(() => {
+    if (relayWsRef.current) {
+      console.log('[DataChannelManager] 关闭中继连接');
+      relayWsRef.current.close();
+      relayWsRef.current = null;
+    }
+  }, []);
+
+  // 处理中继收到的数据消息（由 ConnectionCore 分发调用）
+  const handleRelayMessage = useCallback((event: MessageEvent) => {
     if (typeof event.data === 'string') {
       try {
         const message = JSON.parse(event.data) as WebRTCMessage;
-        console.log('[DataChannelManager] 收到消息:', message.type, message.channel || 'default');
+        console.log('[DataChannelManager:Relay] 收到中继消息:', message.type, message.channel || 'default');
 
-        // 根据通道分发消息
         if (message.channel) {
           const handler = messageHandlers.current.get(message.channel);
           if (handler) {
             handler(message);
           }
         } else {
-          // 兼容旧版本，广播给所有处理器
+          messageHandlers.current.forEach(handler => handler(message));
+        }
+      } catch (error) {
+        console.error('[DataChannelManager:Relay] 解析中继消息失败:', error);
+      }
+    } else if (event.data instanceof ArrayBuffer) {
+      console.log('[DataChannelManager:Relay] 收到中继二进制数据:', event.data.byteLength, 'bytes');
+      const fileHandler = dataHandlers.current.get('file-transfer');
+      if (fileHandler) {
+        fileHandler(event.data);
+      } else {
+        const firstHandler = dataHandlers.current.values().next().value;
+        if (firstHandler) {
+          firstHandler(event.data);
+        }
+      }
+    } else if (event.data instanceof Blob) {
+      // WebSocket 某些情况下收到 Blob
+      event.data.arrayBuffer().then((buffer: ArrayBuffer) => {
+        console.log('[DataChannelManager:Relay] 收到中继二进制数据(Blob):', buffer.byteLength, 'bytes');
+        const fileHandler = dataHandlers.current.get('file-transfer');
+        if (fileHandler) {
+          fileHandler(buffer);
+        } else {
+          const firstHandler = dataHandlers.current.values().next().value;
+          if (firstHandler) {
+            firstHandler(buffer);
+          }
+        }
+      });
+    }
+  }, []);
+
+  // 处理数据通道消息 (P2P 模式)
+  const handleDataChannelMessage = useCallback((event: MessageEvent) => {
+    if (typeof event.data === 'string') {
+      try {
+        const message = JSON.parse(event.data) as WebRTCMessage;
+        console.log('[DataChannelManager] 收到消息:', message.type, message.channel || 'default');
+
+        if (message.channel) {
+          const handler = messageHandlers.current.get(message.channel);
+          if (handler) {
+            handler(message);
+          }
+        } else {
           messageHandlers.current.forEach(handler => handler(message));
         }
       } catch (error) {
@@ -266,12 +358,10 @@ export function useWebRTCDataChannelManager(
     } else if (event.data instanceof ArrayBuffer) {
       console.log('[DataChannelManager] 收到数据:', event.data.byteLength, 'bytes');
 
-      // 数据优先发给文件传输处理器
       const fileHandler = dataHandlers.current.get('file-transfer');
       if (fileHandler) {
         fileHandler(event.data);
       } else {
-        // 如果没有文件处理器，发给第一个处理器
         const firstHandler = dataHandlers.current.values().next().value;
         if (firstHandler) {
           firstHandler(event.data);
@@ -280,42 +370,67 @@ export function useWebRTCDataChannelManager(
     }
   }, []);
 
-  // 发送消息
+  // 发送消息 - 自动选择可用通道（P2P 优先，否则用中继）
   const sendMessage = useCallback((message: WebRTCMessage, channel?: string) => {
-    const dataChannel = dcRef.current;
-    if (!dataChannel || dataChannel.readyState !== 'open') {
-      console.error('[DataChannelManager] 数据通道未准备就绪');
-      return false;
+    const messageWithChannel = channel ? { ...message, channel } : message;
+    const jsonStr = JSON.stringify(messageWithChannel);
+
+    // 优先使用 P2P DataChannel
+    if (isP2PAvailable()) {
+      try {
+        dcRef.current!.send(jsonStr);
+        console.log('[DataChannelManager:P2P] 发送消息:', message.type, channel || 'default');
+        return true;
+      } catch (error) {
+        console.error('[DataChannelManager:P2P] 发送消息失败:', error);
+        // P2P 发送失败，尝试中继
+      }
     }
 
-    try {
-      const messageWithChannel = channel ? { ...message, channel } : message;
-      dataChannel.send(JSON.stringify(messageWithChannel));
-      console.log('[DataChannelManager] 发送消息:', message.type, channel || 'default');
-      return true;
-    } catch (error) {
-      console.error('[DataChannelManager] 发送消息失败:', error);
-      return false;
+    // 回退到 WS 中继
+    if (isRelayMode()) {
+      try {
+        relayWsRef.current!.send(jsonStr);
+        console.log('[DataChannelManager:Relay] 发送消息:', message.type, channel || 'default');
+        return true;
+      } catch (error) {
+        console.error('[DataChannelManager:Relay] 发送消息失败:', error);
+        return false;
+      }
     }
-  }, []);
 
-  // 发送二进制数据
+    console.error('[DataChannelManager] 没有可用的传输通道');
+    return false;
+  }, [isP2PAvailable, isRelayMode]);
+
+  // 发送二进制数据 - 自动选择可用通道
   const sendData = useCallback((data: ArrayBuffer) => {
-    const dataChannel = dcRef.current;
-    if (!dataChannel || dataChannel.readyState !== 'open') {
-      console.error('[DataChannelManager] 数据通道未准备就绪');
-      return false;
+    // 优先使用 P2P DataChannel
+    if (isP2PAvailable()) {
+      try {
+        dcRef.current!.send(data);
+        console.log('[DataChannelManager:P2P] 发送数据:', data.byteLength, 'bytes');
+        return true;
+      } catch (error) {
+        console.error('[DataChannelManager:P2P] 发送数据失败:', error);
+      }
     }
 
-    try {
-      dataChannel.send(data);
-      console.log('[DataChannelManager] 发送数据:', data.byteLength, 'bytes');
-      return true;
-    } catch (error) {
-      console.error('[DataChannelManager] 发送数据失败:', error);
-      return false;
+    // 回退到 WS 中继
+    if (isRelayMode()) {
+      try {
+        relayWsRef.current!.send(data);
+        console.log('[DataChannelManager:Relay] 发送数据:', data.byteLength, 'bytes');
+        return true;
+      } catch (error) {
+        console.error('[DataChannelManager:Relay] 发送数据失败:', error);
+        return false;
+      }
     }
-  }, []);
+
+    console.error('[DataChannelManager] 没有可用的传输通道');
+    return false;
+  }, [isP2PAvailable, isRelayMode]);
 
   // 注册消息处理器
   const registerMessageHandler = useCallback((channel: string, handler: MessageHandler) => {
@@ -339,13 +454,28 @@ export function useWebRTCDataChannelManager(
     };
   }, []);
 
-  // 获取数据通道状态
-  const getChannelState = useCallback(() => {
+  // 获取数据通道状态 - 综合 P2P 和 Relay 状态
+  const getChannelState = useCallback((): RTCDataChannelState => {
+    // P2P 通道打开时优先返回
+    if (dcRef.current?.readyState === 'open') {
+      return 'open';
+    }
+    // 中继模式可用
+    if (relayWsRef.current?.readyState === WebSocket.OPEN) {
+      return 'open';
+    }
+    // P2P 通道正在连接
+    if (dcRef.current?.readyState === 'connecting') {
+      return 'connecting';
+    }
     return dcRef.current?.readyState || 'closed';
   }, []);
 
   return {
     createDataChannel,
+    switchToRelay,
+    closeRelay,
+    handleRelayMessage,
     sendMessage,
     sendData,
     registerMessageHandler,

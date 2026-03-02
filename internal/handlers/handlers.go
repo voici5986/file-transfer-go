@@ -10,12 +10,20 @@ import (
 
 type Handler struct {
 	webrtcService *services.WebRTCService
+	relayService  *services.RelayService
 }
 
 func NewHandler() *Handler {
+	webrtcService := services.NewWebRTCService()
 	return &Handler{
-		webrtcService: services.NewWebRTCService(),
+		webrtcService: webrtcService,
+		relayService:  services.NewRelayService(webrtcService),
 	}
+}
+
+// HandleRelayWebSocket 处理数据中继WebSocket连接（P2P失败时的降级方案）
+func (h *Handler) HandleRelayWebSocket(w http.ResponseWriter, r *http.Request) {
+	h.relayService.HandleRelayWebSocket(w, r)
 }
 
 // HandleWebRTCWebSocket 处理WebRTC信令WebSocket连接

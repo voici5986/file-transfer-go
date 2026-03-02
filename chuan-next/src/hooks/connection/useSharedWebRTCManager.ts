@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { useWebRTCStore, type WebRTCStateManager } from '../ui/webRTCStore';
+import { useWebRTCStore, type WebRTCStateManager, type TransportMode } from '../ui/webRTCStore';
 import { useWebRTCDataChannelManager, WebRTCMessage } from './useWebRTCDataChannelManager';
 import { useWebRTCTrackManager } from './useWebRTCTrackManager';
 import { useWebRTCConnectionCore } from './useWebRTCConnectionCore';
@@ -17,6 +17,8 @@ export interface WebRTCConnection {
   isPeerConnected: boolean;
   error: string | null;
   canRetry: boolean;
+  // 传输模式
+  transportMode: TransportMode;
 
   // 操作方法
   connect: (roomCode: string, role: 'sender' | 'receiver') => Promise<void>;
@@ -61,6 +63,7 @@ export function useSharedWebRTCManager(): WebRTCConnection {
       error: store.error,
       canRetry: store.canRetry,
       currentRoom: store.currentRoom,
+      transportMode: store.transportMode,
     }),
     updateState: store.updateState,
     setCurrentRoom: store.setCurrentRoom,
@@ -87,6 +90,7 @@ export function useSharedWebRTCManager(): WebRTCConnection {
     isPeerConnected: store.isPeerConnected,
     error: store.error,
     canRetry: store.canRetry,
+    transportMode: store.transportMode,
   };
 
   // 创建 createOfferNow 方法
@@ -115,6 +119,7 @@ export function useSharedWebRTCManager(): WebRTCConnection {
     isPeerConnected: state.isPeerConnected,
     error: state.error,
     canRetry: state.canRetry,
+    transportMode: state.transportMode,
 
     // 操作方法
     connect: connectionCore.connect,

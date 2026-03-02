@@ -3,12 +3,12 @@ import { useRef, useCallback } from 'react';
 import { getWsUrl } from '@/lib/config';
 import { getIceServersConfig } from '../settings/useIceServersConfig';
 import { WebRTCStateManager } from '../ui/webRTCStore';
-import { WebRTCDataChannelManager, WebRTCMessage } from './useWebRTCDataChannelManager';
+import { WebRTCDataChannelManager } from './useWebRTCDataChannelManager';
 import { WebRTCTrackManager } from './useWebRTCTrackManager';
 
 /**
  * WebRTC 核心连接管理器
- * 负责基础的 WebRTC 连接管理
+ * 负责基础的 WebRTC 连接管理，支持 P2P → WS Relay 自动降级
  */
 export interface WebRTCConnectionCore {
   // 连接到房间
@@ -48,6 +48,13 @@ export function useWebRTCConnectionCore(
   
   // 用于跟踪是否是用户主动断开连接
   const isUserDisconnecting = useRef<boolean>(false);
+  
+  // 中继降级相关
+  const relayWsRef = useRef<WebSocket | null>(null);
+  const isRelayFallbackInProgress = useRef<boolean>(false);
+  const p2pFailureTimeout = useRef<NodeJS.Timeout | null>(null);
+  // 标记是否已经发送过 relay-request（避免重复发送）
+  const relayRequestSent = useRef<boolean>(false);
 
   // 清理连接
   const cleanup = useCallback((shouldNotifyDisconnect: boolean = false) => {
@@ -57,11 +64,25 @@ export function useWebRTCConnectionCore(
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
+    
+    if (p2pFailureTimeout.current) {
+      clearTimeout(p2pFailureTimeout.current);
+      p2pFailureTimeout.current = null;
+    }
 
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
     }
+
+    // 关闭中继连接
+    dataChannelManager.closeRelay();
+    if (relayWsRef.current) {
+      relayWsRef.current.close();
+      relayWsRef.current = null;
+    }
+    isRelayFallbackInProgress.current = false;
+    relayRequestSent.current = false;
 
     // 在清理 WebSocket 之前发送断开通知
     if (shouldNotifyDisconnect && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -83,7 +104,206 @@ export function useWebRTCConnectionCore(
 
     currentRoom.current = null;
     isUserDisconnecting.current = false;  // 重置主动断开标志
-  }, []);
+  }, [dataChannelManager]);
+
+  // ===== 连接到中继服务器（实际的 WS 连接逻辑） =====
+  const connectToRelay = useCallback(() => {
+    const room = currentRoom.current;
+    if (!room) {
+      console.warn('[ConnectionCore] 没有房间信息，无法连接中继');
+      return;
+    }
+
+    if (isRelayFallbackInProgress.current) {
+      console.log('[ConnectionCore] ⏭️ 中继连接已在进行中，跳过');
+      return;
+    }
+
+    if (isUserDisconnecting.current) {
+      console.log('[ConnectionCore] 用户正在主动断开，跳过中继');
+      return;
+    }
+
+    isRelayFallbackInProgress.current = true;
+    console.log('[ConnectionCore] 🔄 连接到中继服务器...');
+    
+    // 更新状态：正在降级
+    stateManager.updateState({
+      error: null,
+      isConnecting: true,
+      canRetry: false,
+    });
+
+    const baseWsUrl = getWsUrl();
+    if (!baseWsUrl) {
+      console.error('[ConnectionCore] 无法获取 WS URL，中继连接失败');
+      isRelayFallbackInProgress.current = false;
+      stateManager.updateState({
+        error: '中继连接失败：无法获取服务器地址',
+        isConnecting: false,
+        canRetry: true,
+      });
+      return;
+    }
+
+    const relayUrl = `${baseWsUrl}/api/ws/relay?code=${room.code}&role=${room.role}`;
+    console.log('[ConnectionCore] 🌐 连接中继服务器:', relayUrl);
+
+    try {
+      const relayWs = new WebSocket(relayUrl);
+      relayWsRef.current = relayWs;
+
+      relayWs.binaryType = 'arraybuffer';
+
+      relayWs.onopen = () => {
+        console.log('[ConnectionCore] ✅ 中继 WebSocket 连接已建立');
+      };
+
+      // 统一的消息处理器：控制消息在这里处理，数据消息转发给 dataChannelManager
+      relayWs.onmessage = (event: MessageEvent) => {
+        // 文本消息：先检查是否是中继控制消息
+        if (typeof event.data === 'string') {
+          try {
+            const msg = JSON.parse(event.data);
+            
+            // 中继服务的控制消息
+            if (msg.type === 'relay-ready') {
+              console.log('[ConnectionCore] 📡 中继已就绪, 对方在线:', msg.peer_connected);
+              if (msg.peer_connected) {
+                console.log('[ConnectionCore] 🎉 双方已通过中继连接，切换传输通道');
+                dataChannelManager.switchToRelay(relayWs);
+                isRelayFallbackInProgress.current = false;
+                stateManager.updateState({
+                  isConnected: true,
+                  isConnecting: false,
+                  isPeerConnected: true,
+                  error: null,
+                  canRetry: false,
+                  transportMode: 'relay',
+                });
+              }
+              // peer_connected === false: 等待对方也连接到中继
+              return;
+            }
+            
+            if (msg.type === 'relay-peer-joined') {
+              console.log('[ConnectionCore] 🎉 对方已加入中继房间，切换传输通道');
+              dataChannelManager.switchToRelay(relayWs);
+              isRelayFallbackInProgress.current = false;
+              stateManager.updateState({
+                isConnected: true,
+                isConnecting: false,
+                isPeerConnected: true,
+                error: null,
+                canRetry: false,
+                transportMode: 'relay',
+              });
+              return;
+            }
+
+            if (msg.type === 'relay-peer-left') {
+              console.log('[ConnectionCore] 🔌 对方离开中继房间');
+              stateManager.updateState({
+                isPeerConnected: false,
+                isConnected: false,
+                error: '对方已离开房间',
+                canRetry: true,
+              });
+              return;
+            }
+
+            if (msg.type === 'error') {
+              console.error('[ConnectionCore] 中继服务错误:', msg.error);
+              isRelayFallbackInProgress.current = false;
+              stateManager.updateState({
+                error: `中继连接失败: ${msg.error}`,
+                isConnecting: false,
+                canRetry: true,
+              });
+              return;
+            }
+          } catch {
+            // 不是合法 JSON 或不是控制消息，当作数据消息处理
+          }
+        }
+
+        // 非控制消息 → 交给 dataChannelManager 分发给业务层
+        dataChannelManager.handleRelayMessage(event);
+      };
+
+      relayWs.onerror = (error) => {
+        console.error('[ConnectionCore] ❌ 中继 WebSocket 错误:', error);
+        isRelayFallbackInProgress.current = false;
+        stateManager.updateState({
+          error: 'WS 中继连接失败，请重试',
+          isConnecting: false,
+          canRetry: true,
+        });
+      };
+
+      relayWs.onclose = (event) => {
+        console.log('[ConnectionCore] 🔌 中继 WebSocket 关闭:', event.code, event.reason);
+        if (relayWsRef.current === relayWs) {
+          relayWsRef.current = null;
+        }
+        isRelayFallbackInProgress.current = false;
+        
+        // 如果不是用户主动断开，且当前是中继模式
+        if (!isUserDisconnecting.current && stateManager.getState().transportMode === 'relay') {
+          stateManager.updateState({
+            isConnected: false,
+            isPeerConnected: false,
+            error: '中继连接断开',
+            canRetry: true,
+          });
+        }
+      };
+
+    } catch (error) {
+      console.error('[ConnectionCore] 创建中继连接失败:', error);
+      isRelayFallbackInProgress.current = false;
+      stateManager.updateState({
+        error: '无法建立中继连接，请重试',
+        isConnecting: false,
+        canRetry: true,
+      });
+    }
+  }, [stateManager, dataChannelManager]);
+
+  // ===== 发起中继降级（通知对方 + 自己连接） =====
+  const initiateRelayFallback = useCallback(() => {
+    if (relayRequestSent.current || isRelayFallbackInProgress.current) {
+      console.log('[ConnectionCore] ⏭️ 中继降级已发起/进行中，跳过');
+      return;
+    }
+    
+    const room = currentRoom.current;
+    if (!room) {
+      console.warn('[ConnectionCore] 没有房间信息，无法降级');
+      return;
+    }
+
+    if (isUserDisconnecting.current) {
+      console.log('[ConnectionCore] 用户正在主动断开，跳过降级');
+      return;
+    }
+
+    console.log('[ConnectionCore] 🔄 P2P 连接失败，通过信令通知对方切换中继...');
+    relayRequestSent.current = true;
+
+    // 通过信令 WS 通知对方也连接到中继
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'relay-request',
+        payload: { reason: 'P2P连接失败' }
+      }));
+      console.log('[ConnectionCore] 📤 已通过信令通知对方切换中继');
+    }
+
+    // 自己也连接到中继
+    connectToRelay();
+  }, [connectToRelay]);
 
   // 创建 PeerConnection 和相关设置
   const createPeerConnection = useCallback((ws: WebSocket, role: 'sender' | 'receiver', isReconnect: boolean = false) => {
@@ -138,10 +358,15 @@ export function useWebRTCConnectionCore(
         case 'connected':
         case 'completed':
           console.log('[ConnectionCore] ✅ ICE连接成功');
+          // ICE 连接成功，清除降级定时器
+          if (p2pFailureTimeout.current) {
+            clearTimeout(p2pFailureTimeout.current);
+            p2pFailureTimeout.current = null;
+          }
           break;
         case 'failed':
-          console.error('[ConnectionCore] ❌ ICE连接失败');
-          stateManager.updateState({ error: 'ICE连接失败，可能是网络防火墙阻止了连接', isConnecting: false, canRetry: true });
+          console.error('[ConnectionCore] ❌ ICE连接失败，启动中继降级');
+          initiateRelayFallback();
           break;
         case 'disconnected':
           console.log('[ConnectionCore] 🔌 ICE连接断开');
@@ -158,22 +383,38 @@ export function useWebRTCConnectionCore(
         case 'connecting':
           console.log('[ConnectionCore] 🔄 WebRTC正在连接中...');
           stateManager.updateState({ isPeerConnected: false });
+          
+          // 设置 P2P 连接超时：15 秒后如果还没连上就降级
+          if (p2pFailureTimeout.current) {
+            clearTimeout(p2pFailureTimeout.current);
+          }
+          p2pFailureTimeout.current = setTimeout(() => {
+            if (pcRef.current && pcRef.current.connectionState !== 'connected') {
+              console.log('[ConnectionCore] ⏰ P2P 连接超时（15秒），启动中继降级');
+              initiateRelayFallback();
+            }
+          }, 15000);
           break;
         case 'connected':
           console.log('[ConnectionCore] 🎉 WebRTC P2P连接已完全建立，可以进行媒体传输');
+          // 清除降级定时器
+          if (p2pFailureTimeout.current) {
+            clearTimeout(p2pFailureTimeout.current);
+            p2pFailureTimeout.current = null;
+          }
           // 确保所有连接状态都正确更新
           stateManager.updateState({
             isWebSocketConnected: true,
             isConnected: true,
             isPeerConnected: true,
             error: null,
-            canRetry: false
+            canRetry: false,
+            transportMode: 'p2p',
           });
           
           // 如果是重新连接，触发数据同步
           if (isReconnect) {
             console.log('[ConnectionCore] 🔄 检测到重新连接，触发数据同步');
-            // 发送同步请求消息
             setTimeout(() => {
               const dc = pcRef.current?.createDataChannel('sync-channel');
               if (dc && dc.readyState === 'open') {
@@ -184,12 +425,14 @@ export function useWebRTCConnectionCore(
                 console.log('[ConnectionCore] 📤 发送数据同步请求');
                 dc.close();
               }
-            }, 500); // 等待数据通道完全稳定
+            }, 500);
           }
           break;
         case 'failed':
-          console.error('[ConnectionCore] ❌ WebRTC连接失败');
-          stateManager.updateState({ error: 'WebRTC连接失败，请检查网络设置或重试', isPeerConnected: false, canRetry: true });
+          console.error('[ConnectionCore] ❌ WebRTC连接失败，启动中继降级');
+          stateManager.updateState({ isPeerConnected: false });
+          // P2P 连接失败，自动降级到中继
+          initiateRelayFallback();
           break;
         case 'disconnected':
           console.log('[ConnectionCore] 🔌 WebRTC连接已断开');
@@ -207,7 +450,7 @@ export function useWebRTCConnectionCore(
 
     console.log('[ConnectionCore] ✅ PeerConnection创建完成，角色:', role, '是否重新连接:', isReconnect);
     return pc;
-  }, [stateManager, dataChannelManager]);
+  }, [stateManager, dataChannelManager, initiateRelayFallback]);
 
   // 连接到房间
   const connect = useCallback(async (roomCode: string, role: 'sender' | 'receiver') => {
@@ -278,11 +521,10 @@ export function useWebRTCConnectionCore(
               console.log('[ConnectionCore] 👥 对方已加入房间，角色:', message.payload?.role);
               if (role === 'sender' && message.payload?.role === 'receiver') {
                 console.log('[ConnectionCore] 🚀 接收方已连接，发送方开始建立P2P连接');
-                // 确保WebSocket连接状态正确更新
+                // 标记对方已加入，但 isPeerConnected 在 P2P/Relay 真正连通后才设为 true
                 stateManager.updateState({
                   isWebSocketConnected: true,
                   isConnected: true,
-                  isPeerConnected: true // 标记对方已加入，可以开始P2P
                 });
                 
                 // 如果是重新连接，先清理旧的PeerConnection
@@ -308,11 +550,10 @@ export function useWebRTCConnectionCore(
                 }
               } else if (role === 'receiver' && message.payload?.role === 'sender') {
                 console.log('[ConnectionCore] 🚀 发送方已连接，接收方准备接收P2P连接');
-                // 确保WebSocket连接状态正确更新
+                // 标记对方已加入，但 isPeerConnected 在 P2P/Relay 真正连通后才设为 true
                 stateManager.updateState({
                   isWebSocketConnected: true,
                   isConnected: true,
-                  isPeerConnected: true // 标记对方已加入
                 });
                 
                 // 如果是重新连接，先清理旧的PeerConnection
@@ -454,6 +695,12 @@ export function useWebRTCConnectionCore(
               stateManager.updateState({ error: message.error, isConnecting: false, canRetry: true });
               break;
 
+            case 'relay-request':
+              // 对方的 P2P 失败，请求双方都切换到中继模式
+              console.log('[ConnectionCore] 📨 收到对方的中继降级请求');
+              connectToRelay();
+              break;
+
             case 'disconnection':
               console.log('[ConnectionCore] 🔌 对方主动断开连接');
               // 对方断开连接的处理
@@ -509,7 +756,7 @@ export function useWebRTCConnectionCore(
         canRetry: true
       });
     }
-  }, [stateManager, cleanup, createPeerConnection]);
+  }, [stateManager, cleanup, createPeerConnection, connectToRelay]);
 
   // 断开连接
   const disconnect = useCallback((shouldNotifyDisconnect: boolean = false) => {

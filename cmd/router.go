@@ -53,6 +53,10 @@ func setupAPIRoutes(r *chi.Mux, h *handlers.Handler) {
 	r.Get("/api/ws/webrtc", h.HandleWebRTCWebSocket)
 	r.Get("/ws/webrtc", h.HandleWebRTCWebSocket)
 
+	// WebSocket 数据中继路由（P2P降级方案）
+	r.Get("/api/ws/relay", h.HandleRelayWebSocket)
+	r.Get("/ws/relay", h.HandleRelayWebSocket)
+
 	// WebRTC房间API
 	r.Post("/api/create-room", h.CreateRoomHandler)
 	r.Get("/api/room-info", h.WebRTCRoomStatusHandler)

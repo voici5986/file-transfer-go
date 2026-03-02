@@ -14,11 +14,12 @@ interface ConnectionStatusProps {
 }
 
 // 连接状态枚举
-const getConnectionStatus = (connection: { isWebSocketConnected?: boolean; isPeerConnected?: boolean; isConnecting?: boolean; error?: string | null }, currentRoom: { code: string; role: 'sender' | 'receiver' } | null) => {
+const getConnectionStatus = (connection: { isWebSocketConnected?: boolean; isPeerConnected?: boolean; isConnecting?: boolean; error?: string | null; transportMode?: string }, currentRoom: { code: string; role: 'sender' | 'receiver' } | null) => {
   const isWebSocketConnected = connection?.isWebSocketConnected || false;
   const isPeerConnected = connection?.isPeerConnected || false;
   const isConnecting = connection?.isConnecting || false;
   const error = connection?.error || null;
+  const transportMode = connection?.transportMode || 'p2p';
 
   if (error) {
     return {
@@ -32,7 +33,7 @@ const getConnectionStatus = (connection: { isWebSocketConnected?: boolean; isPee
     return {
       type: 'connecting' as const,
       message: '正在连接',
-      detail: '建立房间连接中...',
+      detail: transportMode === 'relay' ? '正在建立中继连接...' : '建立房间连接中...',
     };
   }
 
@@ -45,7 +46,6 @@ const getConnectionStatus = (connection: { isWebSocketConnected?: boolean; isPee
   }
 
   // 如果有房间信息但WebSocket未连接，且不是正在连接状态
-  // 可能是状态更新的时序问题，显示连接中状态
   if (!isWebSocketConnected && !isConnecting) {
     return {
       type: 'connecting' as const,
@@ -63,6 +63,13 @@ const getConnectionStatus = (connection: { isWebSocketConnected?: boolean; isPee
   }
 
   if (isWebSocketConnected && isPeerConnected) {
+    if (transportMode === 'relay') {
+      return {
+        type: 'connected-relay' as const,
+        message: '服务器中继连接',
+        detail: 'P2P不可用，已自动切换到服务器中继传输',
+      };
+    }
     return {
       type: 'connected' as const,
       message: 'P2P连接成功',
@@ -82,6 +89,8 @@ const getStatusColor = (type: string) => {
   switch (type) {
     case 'connected':
       return 'text-green-600';
+    case 'connected-relay':
+      return 'text-blue-600';
     case 'connecting':
     case 'room-ready':
       return 'text-yellow-600';
@@ -101,6 +110,8 @@ const StatusIcon = ({ type, className = 'w-3 h-3' }: { type: string; className?:
   switch (type) {
     case 'connected':
       return <div className={cn(iconClass, 'bg-green-500 rounded-full')} />;
+    case 'connected-relay':
+      return <div className={cn(iconClass, 'bg-blue-500 rounded-full')} />;
     case 'connecting':
     case 'room-ready':
       return (
@@ -116,15 +127,17 @@ const StatusIcon = ({ type, className = 'w-3 h-3' }: { type: string; className?:
 };
 
 // 获取连接状态文字描述
-const getConnectionStatusText = (connection: { isWebSocketConnected?: boolean; isPeerConnected?: boolean; isConnecting?: boolean; error?: string | null }) => {
+const getConnectionStatusText = (connection: { isWebSocketConnected?: boolean; isPeerConnected?: boolean; isConnecting?: boolean; error?: string | null; transportMode?: string }) => {
   const isWebSocketConnected = connection?.isWebSocketConnected || false;
   const isPeerConnected = connection?.isPeerConnected || false;
   const isConnecting = connection?.isConnecting || false;
   const error = connection?.error || null;
+  const transportMode = connection?.transportMode || 'p2p';
   
   const wsStatus = isWebSocketConnected ? 'WS已连接' : 'WS未连接';
-  const rtcStatus = isPeerConnected ? 'RTC已连接' : 
-    isWebSocketConnected ? 'RTC等待连接' : 'RTC未连接';
+  const modeLabel = transportMode === 'relay' ? '中继' : 'P2P';
+  const rtcStatus = isPeerConnected ? `${modeLabel}已连接` : 
+    isWebSocketConnected ? `${modeLabel}等待连接` : `${modeLabel}未连接`;
   
   if (error) {
     return `${wsStatus} ${rtcStatus} - 连接失败`;
@@ -135,6 +148,9 @@ const getConnectionStatusText = (connection: { isWebSocketConnected?: boolean; i
   }
   
   if (isPeerConnected) {
+    if (transportMode === 'relay') {
+      return `${wsStatus} ${rtcStatus} - 服务器中继`;
+    }
     return `${wsStatus} ${rtcStatus} - P2P连接成功`;
   }
   
@@ -153,6 +169,7 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
     isPeerConnected: webrtcState.isPeerConnected,
     isConnecting: webrtcState.isConnecting,
     error: webrtcState.error,
+    transportMode: webrtcState.transportMode,
   };
   
   const isConnected = webrtcState.isWebSocketConnected && webrtcState.isPeerConnected;
@@ -163,6 +180,7 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
   }
   
   const status = getConnectionStatus(connection, currentRoom ?? null);
+  const isRelay = webrtcState.transportMode === 'relay';
 
   if (compact) {
     return (
@@ -182,10 +200,10 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
           <span className="text-slate-300 font-medium">|</span>
           <div className="flex items-center gap-1.5">
             <StatusIcon 
-              type={connection.isPeerConnected ? 'connected' : 'disconnected'} 
+              type={connection.isPeerConnected ? (isRelay ? 'connected-relay' : 'connected') : 'disconnected'} 
               className="w-2.5 h-2.5" 
             />
-            <span className="text-sm text-slate-600 font-medium">RTC</span>
+            <span className="text-sm text-slate-600 font-medium">{isRelay ? '中继' : 'RTC'}</span>
           </div>
         </div>
       </div>
@@ -221,15 +239,19 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
           <span className="text-slate-300">|</span>
           
           <div className="flex items-center gap-2">
-            <span className="text-slate-500 font-medium">RTC</span>
+            <span className="text-slate-500 font-medium">{isRelay ? '中继' : 'RTC'}</span>
             <StatusIcon 
-              type={connection.isPeerConnected ? 'connected' : 'disconnected'} 
+              type={connection.isPeerConnected ? (isRelay ? 'connected-relay' : 'connected') : 'disconnected'} 
               className="w-2.5 h-2.5" 
             />
             <span className={cn(
-              connection.isPeerConnected ? 'text-green-600' : 'text-slate-500'
+              connection.isPeerConnected 
+                ? (isRelay ? 'text-blue-600' : 'text-green-600') 
+                : 'text-slate-500'
             )}>
-              {connection.isPeerConnected ? '已连接' : '未连接'}
+              {connection.isPeerConnected 
+                ? (isRelay ? '中继已连接' : '已连接') 
+                : '未连接'}
             </span>
           </div>
         </div>

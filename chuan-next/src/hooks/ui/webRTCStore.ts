@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 
+// 传输模式
+export type TransportMode = 'p2p' | 'relay';
+
 export interface WebRTCState {
   isConnected: boolean;
   isConnecting: boolean;
@@ -8,6 +11,8 @@ export interface WebRTCState {
   error: string | null;
   canRetry: boolean;
   currentRoom: { code: string; role: 'sender' | 'receiver' } | null;
+  // 传输模式：p2p 直连 | relay 服务器中继
+  transportMode: TransportMode;
 }
 
 /**
@@ -37,6 +42,7 @@ const initialState: WebRTCState = {
   error: null,
   canRetry: false,
   currentRoom: null,
+  transportMode: 'p2p',
 };
 
 export const useWebRTCStore = create<WebRTCStore>((set) => ({
