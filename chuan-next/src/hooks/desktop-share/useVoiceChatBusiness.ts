@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { WebRTCConnection } from '../connection/useSharedWebRTCManager';
+import type { WebRTCConnection } from '../connection/types';
 import { useAudioVisualizer } from './useAudioVisualizer';
 
 interface VoiceChatState {
@@ -96,10 +96,11 @@ export function useVoiceChatBusiness(connection: WebRTCConnection) {
       }
     };
 
-    // feature/ws 的 onTrack 返回 void（直接设置 pc.ontrack）
-    connection.onTrack(trackHandler);
+    // 注册轨道处理器（多监听器模式，与桌面共享并存）
+    const unsubscribe = connection.registerTrackHandler('voice-chat', trackHandler);
     
     return () => {
+      unsubscribe();
       if (currentTrackRef.current) {
         currentTrackRef.current.onended = null;
         currentTrackRef.current.onmute = null;

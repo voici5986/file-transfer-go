@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { WebRTCConnection } from '../connection/useSharedWebRTCManager';
+import type { WebRTCConnection } from '../connection/types';
 import type { FileInfo } from '@/types';
 
 // 文件传输状态
@@ -40,38 +40,26 @@ interface FileMetadata {
 }
 
 // 文件块信息
+// 文件块元信息
 interface FileChunk {
   fileId: string;
   chunkIndex: number;
   totalChunks: number;
-  checksum?: string; // 数据校验和
 }
 
-// 块确认信息
-interface ChunkAck {
-  fileId: string;
-  chunkIndex: number;
-  success: boolean;
-  checksum?: string;
-}
-
-// 传输状态
+// 发送端传输状态
 interface TransferStatus {
   fileId: string;
   fileName: string;
   totalChunks: number;
   sentChunks: Set<number>;
-  acknowledgedChunks: Set<number>;
-  failedChunks: Set<number>;
   lastChunkTime: number;
-  retryCount: Map<number, number>;
-  averageSpeed: number; // KB/s
   // 滑动窗口测速
-  speedWindowBytes: number;  // 窗口内累计字节数
-  speedWindowStart: number;  // 窗口开始时间
-  lastReportedSpeed: number; // 上次上报的速度 bytes/s
-  lastReportedEta: number;   // 上次上报的 ETA 秒
-  lastSpeedReportTime: number; // 上次上报速度的时间
+  speedWindowBytes: number;
+  speedWindowStart: number;
+  lastReportedSpeed: number; // bytes/s
+  lastReportedEta: number;   // 秒
+  lastSpeedReportTime: number;
 }
 
 // 回调类型
@@ -82,9 +70,6 @@ type FileListReceivedCallback = (fileList: FileInfo[]) => void;
 
 const CHANNEL_NAME = 'file-transfer';
 const CHUNK_SIZE = 256 * 1024; // 256KB — WebRTC DataChannel 单次发送上限
-const MAX_RETRIES = 5; // 最大重试次数（仅用于连接恢复）
-const RETRY_DELAY = 1000; // 重试延迟（毫秒）
-const ACK_TIMEOUT = 5000; // 完成确认超时（毫秒）
 const SPEED_WINDOW_MS = 2000; // 速度计算滑动窗口 2 秒
 const SPEED_REPORT_INTERVAL_MS = 1000; // 速度上报最小间隔 1 秒
 const BUFFER_HIGH_WATER = 2 * 1024 * 1024; // 2MB — 发送背压阈值
@@ -220,12 +205,7 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
         break;
 
       case 'file-chunk-ack':
-        const ack: ChunkAck = message.payload;
-        console.log('收到块确认:', ack);
-
-        // 清除超时定时器
-      case 'file-chunk-ack':
-        // 保留消息处理以兼容旧版对端，但不再依赖逐块 ACK 做可靠性
+        // 兼容旧版对端，不再依赖逐块 ACK（SCTP 保证可靠有序传输）
         break;
     }
   }, [updateState]);
@@ -360,11 +340,7 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
       fileName: file.name,
       totalChunks,
       sentChunks: new Set(),
-      acknowledgedChunks: new Set(),
-      failedChunks: new Set(),
       lastChunkTime: nowInit,
-      retryCount: new Map(),
-      averageSpeed: 0,
       speedWindowBytes: 0,
       speedWindowStart: nowInit,
       lastReportedSpeed: 0,
@@ -424,7 +400,6 @@ export function useFileTransferBusiness(connection: WebRTCConnection) {
 
         if (windowElapsed >= SPEED_WINDOW_MS && windowElapsed > 0) {
           const speedBps = (status.speedWindowBytes / windowElapsed) * 1000;
-          status.averageSpeed = speedBps / 1024;
           status.lastReportedSpeed = speedBps;
           const remainingBytes = Math.max(0, file.size - (chunkIndex + 1) * CHUNK_SIZE);
           status.lastReportedEta = speedBps > 0 ? Math.max(0, remainingBytes / speedBps) : 0;

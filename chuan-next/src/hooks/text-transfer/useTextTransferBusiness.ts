@@ -1,13 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { WebRTCConnection } from '../connection/useSharedWebRTCManager';
+import type { WebRTCConnection } from '../connection/types';
 
-// 文本传输状态
+// 文本传输业务状态（仅业务相关字段，连接状态直接从 connection 读取）
 interface TextTransferState {
-  isConnecting: boolean;
-  isConnected: boolean;
-  isWebSocketConnected: boolean;
-  connectionError: string | null;
-  currentText: string; // 当前文本内容
+  currentText: string; // 对端同步过来的文本内容
   isTyping: boolean;   // 对方是否在输入
 }
 
@@ -23,153 +19,91 @@ const CHANNEL_NAME = 'text-transfer';
  */
 export function useTextTransferBusiness(connection: WebRTCConnection) {
   const [state, setState] = useState<TextTransferState>({
-    isConnecting: false,
-    isConnected: false,
-    isWebSocketConnected: false,
-    connectionError: null,
     currentText: '',
-    isTyping: false
+    isTyping: false,
   });
 
   // 回调引用
   const textSyncCallbackRef = useRef<TextSyncCallback | null>(null);
   const typingCallbackRef = useRef<TypingStatusCallback | null>(null);
 
-  // 更新状态的辅助函数
-  const updateState = useCallback((updates: Partial<TextTransferState>) => {
-    setState(prev => ({ ...prev, ...updates }));
-  }, []);
-
   // 消息处理器
   const handleMessage = useCallback((message: any) => {
     if (!message.type.startsWith('text-')) return;
-    
-    console.log('文本传输收到消息:', message.type, message);
 
     switch (message.type) {
       case 'text-sync':
-        // 实时文本同步 - 接收方看到发送方的实时编辑
         if (message.payload && typeof message.payload.text === 'string') {
-          updateState({ currentText: message.payload.text });
-          
-          // 触发文本同步回调
-          if (textSyncCallbackRef.current) {
-            textSyncCallbackRef.current(message.payload.text);
-          }
+          setState(prev => ({ ...prev, currentText: message.payload.text }));
+          textSyncCallbackRef.current?.(message.payload.text);
         }
         break;
 
       case 'text-typing':
-        // 打字状态
         if (typeof message.payload?.typing === 'boolean') {
-          updateState({ isTyping: message.payload.typing });
-          
-          // 触发打字状态回调
-          if (typingCallbackRef.current) {
-            typingCallbackRef.current(message.payload.typing);
-          }
+          setState(prev => ({ ...prev, isTyping: message.payload.typing }));
+          typingCallbackRef.current?.(message.payload.typing);
         }
         break;
-
-      default:
-        console.warn('未知的文本消息类型:', message.type);
     }
-  }, [updateState]);
+  }, []);
 
   // 注册消息处理器
   useEffect(() => {
-    const unregister = connection.registerMessageHandler(CHANNEL_NAME, handleMessage);
-    return unregister;
-  }, [handleMessage]);
+    return connection.registerMessageHandler(CHANNEL_NAME, handleMessage);
+  }, [connection, handleMessage]);
 
-  // 监听连接状态变化 (直接使用 connection 的状态)
-  useEffect(() => {
-    // 同步连接状态
-    updateState({
-      isConnecting: connection.isConnecting,
-      isConnected: connection.isConnected,
-      isWebSocketConnected: connection.isWebSocketConnected,
-      connectionError: connection.error
-    });
-  }, [connection.isConnecting, connection.isConnected, connection.isWebSocketConnected, connection.error, updateState]);
-
-  // 连接
+  // 连接管理（透传）
   const connect = useCallback((roomCode: string, role: 'sender' | 'receiver') => {
     return connection.connect(roomCode, role);
   }, [connection]);
 
-  // 断开连接
   const disconnect = useCallback(() => {
     return connection.disconnect();
   }, [connection]);
 
-  // 发送实时文本同步 (替代原来的 sendMessage)
+  // 发送实时文本同步
   const sendTextSync = useCallback((text: string) => {
-    if (!connection || !connection.isPeerConnected) return;
-    
-    const message = {
-      type: 'text-sync',
-      payload: { text }
-    };
-    
-    const success = connection.sendMessage(message, CHANNEL_NAME);
-    if (success) {
-      console.log('发送实时文本同步:', text.length, '字符');
-    }
+    if (!connection.isPeerConnected) return;
+    connection.sendMessage({ type: 'text-sync', payload: { text } }, CHANNEL_NAME);
   }, [connection]);
 
   // 发送打字状态
   const sendTypingStatus = useCallback((isTyping: boolean) => {
-    if (!connection || !connection.isPeerConnected) return;
-    
-    const message = {
-      type: 'text-typing',
-      payload: { typing: isTyping }
-    };
-    
-    const success = connection.sendMessage(message, CHANNEL_NAME);
-    if (success) {
-      console.log('发送打字状态:', isTyping);
-    }
+    if (!connection.isPeerConnected) return;
+    connection.sendMessage({ type: 'text-typing', payload: { typing: isTyping } }, CHANNEL_NAME);
   }, [connection]);
 
-  // 设置文本同步回调
+  // 回调注册（返回清理函数）
   const onTextSync = useCallback((callback: TextSyncCallback) => {
     textSyncCallbackRef.current = callback;
-    
-    // 返回清理函数
-    return () => {
-      textSyncCallbackRef.current = null;
-    };
+    return () => { textSyncCallbackRef.current = null; };
   }, []);
 
-  // 设置打字状态回调
   const onTypingStatus = useCallback((callback: TypingStatusCallback) => {
     typingCallbackRef.current = callback;
-    
-    // 返回清理函数
-    return () => {
-      typingCallbackRef.current = null;
-    };
+    return () => { typingCallbackRef.current = null; };
   }, []);
 
   return {
-    // 状态 - 直接从 connection 获取
+    // 连接状态（直接读 connection，不做冗余同步）
     isConnecting: connection.isConnecting,
     isConnected: connection.isConnected,
     isWebSocketConnected: connection.isWebSocketConnected,
     connectionError: connection.error,
+
+    // 业务状态
     currentText: state.currentText,
     isTyping: state.isTyping,
-    
+
     // 操作方法
     connect,
     disconnect,
     sendTextSync,
     sendTypingStatus,
-    
+
     // 回调设置
     onTextSync,
-    onTypingStatus
+    onTypingStatus,
   };
 }

@@ -5,7 +5,7 @@ import { Mic, MicOff, PhoneCall, PhoneOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VoiceIndicator } from '@/components/VoiceIndicator';
 import { useVoiceChatBusiness } from '@/hooks/desktop-share';
-import type { WebRTCConnection } from '@/hooks/connection/useSharedWebRTCManager';
+import type { WebRTCConnection } from '@/hooks/connection/types';
 
 interface VoiceChatPanelProps {
   connection: WebRTCConnection;

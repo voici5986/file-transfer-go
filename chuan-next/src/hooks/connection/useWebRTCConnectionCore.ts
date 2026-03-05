@@ -53,8 +53,11 @@ export function useWebRTCConnectionCore(
   const relayWsRef = useRef<WebSocket | null>(null);
   const isRelayFallbackInProgress = useRef<boolean>(false);
   const p2pFailureTimeout = useRef<NodeJS.Timeout | null>(null);
+  const iceDisconnectedTimeout = useRef<NodeJS.Timeout | null>(null);
   // 标记是否已经发送过 relay-request（避免重复发送）
   const relayRequestSent = useRef<boolean>(false);
+  // 通过 ref 避免闭包捕获过时的 initiateRelayFallback
+  const initiateRelayFallbackRef = useRef<() => void>(() => {});
 
   // 清理连接
   const cleanup = useCallback((shouldNotifyDisconnect: boolean = false) => {
@@ -68,6 +71,11 @@ export function useWebRTCConnectionCore(
     if (p2pFailureTimeout.current) {
       clearTimeout(p2pFailureTimeout.current);
       p2pFailureTimeout.current = null;
+    }
+
+    if (iceDisconnectedTimeout.current) {
+      clearTimeout(iceDisconnectedTimeout.current);
+      iceDisconnectedTimeout.current = null;
     }
 
     if (pcRef.current) {
@@ -235,6 +243,7 @@ export function useWebRTCConnectionCore(
       relayWs.onerror = (error) => {
         console.error('[ConnectionCore] ❌ 中继 WebSocket 错误:', error);
         isRelayFallbackInProgress.current = false;
+        relayRequestSent.current = false; // 重置以允许重试
         stateManager.updateState({
           error: 'WS 中继连接失败，请重试',
           isConnecting: false,
@@ -263,6 +272,7 @@ export function useWebRTCConnectionCore(
     } catch (error) {
       console.error('[ConnectionCore] 创建中继连接失败:', error);
       isRelayFallbackInProgress.current = false;
+      relayRequestSent.current = false; // 重置以允许重试
       stateManager.updateState({
         error: '无法建立中继连接，请重试',
         isConnecting: false,
@@ -305,6 +315,9 @@ export function useWebRTCConnectionCore(
     // 自己也连接到中继
     connectToRelay();
   }, [connectToRelay]);
+
+  // 保持 ref 同步，避免闭包过时
+  initiateRelayFallbackRef.current = initiateRelayFallback;
 
   // 创建 PeerConnection 和相关设置
   const createPeerConnection = useCallback((ws: WebSocket, role: 'sender' | 'receiver', isReconnect: boolean = false) => {
@@ -359,18 +372,34 @@ export function useWebRTCConnectionCore(
         case 'connected':
         case 'completed':
           console.log('[ConnectionCore] ✅ ICE连接成功');
-          // ICE 连接成功，清除降级定时器
+          // ICE 连接成功，清除所有降级定时器
           if (p2pFailureTimeout.current) {
             clearTimeout(p2pFailureTimeout.current);
             p2pFailureTimeout.current = null;
           }
+          if (iceDisconnectedTimeout.current) {
+            clearTimeout(iceDisconnectedTimeout.current);
+            iceDisconnectedTimeout.current = null;
+          }
           break;
         case 'failed':
           console.error('[ConnectionCore] ❌ ICE连接失败，启动中继降级');
-          initiateRelayFallback();
+          initiateRelayFallbackRef.current();
           break;
         case 'disconnected':
-          console.log('[ConnectionCore] 🔌 ICE连接断开');
+          console.log('[ConnectionCore] 🔌 ICE连接断开，设置 8 秒超时保护');
+          // ICE disconnected 可能是暂时的（网络抖动），也可能永不恢复
+          // 设置超时保护：8 秒后如果仍非 connected/completed 则降级
+          if (iceDisconnectedTimeout.current) {
+            clearTimeout(iceDisconnectedTimeout.current);
+          }
+          iceDisconnectedTimeout.current = setTimeout(() => {
+            const iceState = pcRef.current?.iceConnectionState;
+            if (iceState && iceState !== 'connected' && iceState !== 'completed') {
+              console.log('[ConnectionCore] ⏰ ICE disconnected 超时（8秒），启动中继降级');
+              initiateRelayFallbackRef.current();
+            }
+          }, 8000);
           break;
         case 'closed':
           console.log('[ConnectionCore] 🚫 ICE连接已关闭');
@@ -385,23 +414,27 @@ export function useWebRTCConnectionCore(
           console.log('[ConnectionCore] 🔄 WebRTC正在连接中...');
           stateManager.updateState({ isPeerConnected: false });
           
-          // 设置 P2P 连接超时：15 秒后如果还没连上就降级
+          // 设置 P2P 连接超时：10 秒后如果还没连上就降级
           if (p2pFailureTimeout.current) {
             clearTimeout(p2pFailureTimeout.current);
           }
           p2pFailureTimeout.current = setTimeout(() => {
             if (pcRef.current && pcRef.current.connectionState !== 'connected') {
-              console.log('[ConnectionCore] ⏰ P2P 连接超时（15秒），启动中继降级');
-              initiateRelayFallback();
+              console.log('[ConnectionCore] ⏰ P2P 连接超时（10秒），启动中继降级');
+              initiateRelayFallbackRef.current();
             }
-          }, 15000);
+          }, 10000);
           break;
         case 'connected':
           console.log('[ConnectionCore] 🎉 WebRTC P2P连接已完全建立，可以进行媒体传输');
-          // 清除降级定时器
+          // 清除所有降级定时器
           if (p2pFailureTimeout.current) {
             clearTimeout(p2pFailureTimeout.current);
             p2pFailureTimeout.current = null;
+          }
+          if (iceDisconnectedTimeout.current) {
+            clearTimeout(iceDisconnectedTimeout.current);
+            iceDisconnectedTimeout.current = null;
           }
           // 确保所有连接状态都正确更新
           stateManager.updateState({
@@ -434,7 +467,7 @@ export function useWebRTCConnectionCore(
           if (!isUserDisconnecting.current) {
             console.log('[ConnectionCore] 启动中继降级');
             stateManager.updateState({ isPeerConnected: false });
-            initiateRelayFallback();
+            initiateRelayFallbackRef.current();
           }
           break;
         case 'disconnected':
@@ -457,7 +490,7 @@ export function useWebRTCConnectionCore(
 
     console.log('[ConnectionCore] ✅ PeerConnection创建完成，角色:', role, '是否重新连接:', isReconnect);
     return pc;
-  }, [stateManager, dataChannelManager, initiateRelayFallback]);
+  }, [stateManager, dataChannelManager]);
 
   // 连接到房间
   const connect = useCallback(async (roomCode: string, role: 'sender' | 'receiver') => {
