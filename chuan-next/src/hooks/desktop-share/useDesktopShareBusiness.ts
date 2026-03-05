@@ -45,9 +45,9 @@ export function useDesktopShareBusiness(externalConnection?: WebRTCConnection) {
   }, [updateState]);
 
   // 设置远程轨道处理器（始终监听，支持与语音通话并存）
+  const registerTrackHandler = webRTC.registerTrackHandler;
   useEffect(() => {
-    console.log('[DesktopShare] 🎧 注册远程轨道处理器');
-    const unsubscribe = webRTC.registerTrackHandler('desktop-share', (event: RTCTrackEvent) => {
+    const unsubscribe = registerTrackHandler('desktop-share', (event: RTCTrackEvent) => {
       // 只处理视频轨道，音频由 VoiceChat 处理
       if (event.track.kind !== 'video') return;
 
@@ -79,7 +79,7 @@ export function useDesktopShareBusiness(externalConnection?: WebRTCConnection) {
       }
     });
     return unsubscribe;
-  }, [webRTC, handleRemoteStream]);
+  }, [registerTrackHandler, handleRemoteStream]);
 
   // 获取桌面共享流
   const getDesktopStream = useCallback(async (): Promise<MediaStream> => {
@@ -268,6 +268,11 @@ export function useDesktopShareBusiness(externalConnection?: WebRTCConnection) {
   // 开始桌面共享（在接收方加入后）
   const startSharing = useCallback(async (): Promise<void> => {
     try {
+      // 中继模式不支持媒体流传输
+      if (webRTC.transportMode === 'relay') {
+        throw new Error('当前为中继模式，不支持桌面共享。桌面共享需要 P2P 直连，请检查网络环境后重试');
+      }
+
       // 检查P2P连接状态（与switchDesktop保持一致）
       if (!webRTC.isPeerConnected) {
         throw new Error('P2P连接未建立');
@@ -316,6 +321,10 @@ export function useDesktopShareBusiness(externalConnection?: WebRTCConnection) {
   // 切换桌面共享（重新选择屏幕）
   const switchDesktop = useCallback(async (): Promise<void> => {
     try {
+      if (webRTC.transportMode === 'relay') {
+        throw new Error('当前为中继模式，不支持桌面共享');
+      }
+
       if (!webRTC.isPeerConnected) {
         throw new Error('P2P连接未建立');
       }
@@ -522,8 +531,10 @@ export function useDesktopShareBusiness(externalConnection?: WebRTCConnection) {
     isConnecting: webRTC.isConnecting,
     isWebSocketConnected: webRTC.isWebSocketConnected,
     isPeerConnected: webRTC.isPeerConnected,
-    // 新增：表示是否可以开始共享（WebSocket已连接且有房间代码）
-    canStartSharing: webRTC.isWebSocketConnected && !!state.connectionCode,
+    // 新增：表示是否可以开始共享（WebSocket已连接且有房间代码且非中继模式）
+    canStartSharing: webRTC.isWebSocketConnected && !!state.connectionCode && webRTC.transportMode !== 'relay',
+    // 传输模式
+    transportMode: webRTC.transportMode,
 
     // 方法
     createRoom,        // 创建房间

@@ -163,9 +163,10 @@ export function useChatBusiness(connection: WebRTCConnection) {
   }, []);
 
   // 注册消息处理器
+  const registerMessageHandler = connection.registerMessageHandler;
   useEffect(() => {
-    return connection.registerMessageHandler(CHANNEL_NAME, handleMessage);
-  }, [connection, handleMessage]);
+    return registerMessageHandler(CHANNEL_NAME, handleMessage);
+  }, [registerMessageHandler, handleMessage]);
 
   // ── 发送文本消息 ──
 

@@ -43,6 +43,11 @@ export interface WebRTCDataChannelManager {
   getBufferedAmount: () => number;
   /** 等待缓冲区排空到指定阈值以下 */
   waitForBufferDrain: (threshold?: number) => Promise<void>;
+
+  // ── 降级回调 ──
+
+  /** 注册降级回调：DataChannel 错误/关闭时通知 ConnectionCore 触发中继降级 */
+  setFallbackCallback: (cb: (() => void) | null) => void;
 }
 
 /**
@@ -59,6 +64,13 @@ export function useWebRTCDataChannelManager(
 ): WebRTCDataChannelManager {
   const dcRef = useRef<RTCDataChannel | null>(null);
   const relayWsRef = useRef<WebSocket | null>(null);
+
+  // 降级回调：由 ConnectionCore 注册
+  const fallbackCallbackRef = useRef<(() => void) | null>(null);
+
+  const setFallbackCallback = useCallback((cb: (() => void) | null) => {
+    fallbackCallbackRef.current = cb;
+  }, []);
 
   // 处理器注册表
   const messageHandlers = useRef<Map<string, MessageHandler>>(new Map());
@@ -219,6 +231,17 @@ export function useWebRTCDataChannelManager(
         isPeerConnected: false,
         canRetry: shouldRetry,
       });
+      // 通知 ConnectionCore 触发中继降级
+      if (shouldRetry) {
+        if (fallbackCallbackRef.current) {
+          console.log('[DataChannel] 📡 DataChannel 错误，触发中继降级回调');
+          fallbackCallbackRef.current();
+        } else {
+          console.warn('[DataChannel] ⚠️ DataChannel 错误且需要降级，但降级回调未注册');
+        }
+      }
+    } else {
+      console.log('[DataChannel] ⓘ️ 已在中继模式，跳过错误处理');
     }
   }, [stateManager, isRelayMode]);
 
@@ -234,7 +257,16 @@ export function useWebRTCDataChannelManager(
     dataChannel.onopen = () => handleChannelOpen(dataChannel, role, isReconnect);
     dataChannel.onmessage = dispatchIncoming;
     dataChannel.onerror = () => handleChannelError(dataChannel, pc, role);
-  }, [handleChannelOpen, dispatchIncoming, handleChannelError]);
+    dataChannel.onclose = () => {
+      console.log(`[DataChannel] 数据通道已关闭 (${role})`);
+      // 仅当之前已建立连接（isPeerConnected 曾为 true）且不在中继模式时才触发降级
+      // 这可以避免 cleanup 期间或初始化期间的误触发
+      if (!isRelayMode() && fallbackCallbackRef.current) {
+        console.log('[DataChannel] 📡 DataChannel 意外关闭，触发中继降级回调');
+        fallbackCallbackRef.current();
+      }
+    };
+  }, [handleChannelOpen, dispatchIncoming, handleChannelError, isRelayMode]);
 
   // ── 创建数据通道 ──
 
@@ -346,19 +378,15 @@ export function useWebRTCDataChannelManager(
   // ────────────────────────────────────────
 
   const registerMessageHandler = useCallback((channel: string, handler: MessageHandler): Unsubscribe => {
-    console.log('[DataChannel] 注册消息处理器:', channel);
     messageHandlers.current.set(channel, handler);
     return () => {
-      console.log('[DataChannel] 取消注册消息处理器:', channel);
       messageHandlers.current.delete(channel);
     };
   }, []);
 
   const registerDataHandler = useCallback((channel: string, handler: DataHandler): Unsubscribe => {
-    console.log('[DataChannel] 注册数据处理器:', channel);
     dataHandlers.current.set(channel, handler);
     return () => {
-      console.log('[DataChannel] 取消注册数据处理器:', channel);
       dataHandlers.current.delete(channel);
     };
   }, []);
@@ -426,5 +454,6 @@ export function useWebRTCDataChannelManager(
     getChannelState,
     getBufferedAmount,
     waitForBufferDrain,
+    setFallbackCallback,
   };
 }

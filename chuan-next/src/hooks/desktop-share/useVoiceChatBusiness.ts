@@ -107,7 +107,7 @@ export function useVoiceChatBusiness(connection: WebRTCConnection) {
         currentTrackRef.current.onunmute = null;
       }
     };
-  }, [connection, handleRemoteAudioTrack]);
+  }, [connection.registerTrackHandler, handleRemoteAudioTrack]);
 
   // 获取本地音频流
   const getLocalAudioStream = useCallback(async (): Promise<MediaStream> => {

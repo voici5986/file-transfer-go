@@ -49,9 +49,10 @@ export function useTextTransferBusiness(connection: WebRTCConnection) {
   }, []);
 
   // 注册消息处理器
+  const registerMessageHandler = connection.registerMessageHandler;
   useEffect(() => {
-    return connection.registerMessageHandler(CHANNEL_NAME, handleMessage);
-  }, [connection, handleMessage]);
+    return registerMessageHandler(CHANNEL_NAME, handleMessage);
+  }, [registerMessageHandler, handleMessage]);
 
   // 连接管理（透传）
   const connect = useCallback((roomCode: string, role: 'sender' | 'receiver') => {

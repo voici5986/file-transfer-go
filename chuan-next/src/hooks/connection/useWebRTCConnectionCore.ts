@@ -58,6 +58,8 @@ export function useWebRTCConnectionCore(
   const relayRequestSent = useRef<boolean>(false);
   // 通过 ref 避免闭包捕获过时的 initiateRelayFallback
   const initiateRelayFallbackRef = useRef<() => void>(() => {});
+  // 全局保底超时：peer-joined 后 N 秒内 isPeerConnected 仍为 false 则降级
+  const peerConnectedTimeout = useRef<NodeJS.Timeout | null>(null);
 
   // 清理连接
   const cleanup = useCallback((shouldNotifyDisconnect: boolean = false) => {
@@ -77,6 +79,14 @@ export function useWebRTCConnectionCore(
       clearTimeout(iceDisconnectedTimeout.current);
       iceDisconnectedTimeout.current = null;
     }
+
+    if (peerConnectedTimeout.current) {
+      clearTimeout(peerConnectedTimeout.current);
+      peerConnectedTimeout.current = null;
+    }
+
+    // 先清除降级回调，防止后续 PC.close() 触发旧 DataChannel 的 onclose 误触发降级
+    dataChannelManager.setFallbackCallback(null);
 
     if (pcRef.current) {
       pcRef.current.close();
@@ -257,6 +267,7 @@ export function useWebRTCConnectionCore(
           relayWsRef.current = null;
         }
         isRelayFallbackInProgress.current = false;
+        relayRequestSent.current = false; // 重置以允许后续重试
         
         // 如果不是用户主动断开，且当前是中继模式
         if (!isUserDisconnecting.current && stateManager.getState().transportMode === 'relay') {
@@ -436,6 +447,12 @@ export function useWebRTCConnectionCore(
             clearTimeout(iceDisconnectedTimeout.current);
             iceDisconnectedTimeout.current = null;
           }
+          if (peerConnectedTimeout.current) {
+            clearTimeout(peerConnectedTimeout.current);
+            peerConnectedTimeout.current = null;
+          }
+          // P2P 已建立，清除降级回调（降级仅在建连阶段生效）
+          dataChannelManager.setFallbackCallback(null);
           // 确保所有连接状态都正确更新
           stateManager.updateState({
             isWebSocketConnected: true,
@@ -487,6 +504,12 @@ export function useWebRTCConnectionCore(
 
     // 创建数据通道
     dataChannelManager.createDataChannel(pc, role, isReconnect);
+
+    // 注册降级回调，DataChannel 错误/关闭时自动触发中继降级
+    dataChannelManager.setFallbackCallback(() => {
+      console.log('[ConnectionCore] 📡 收到 DataChannel 降级回调，启动中继降级');
+      initiateRelayFallbackRef.current();
+    });
 
     console.log('[ConnectionCore] ✅ PeerConnection创建完成，角色:', role, '是否重新连接:', isReconnect);
     return pc;
@@ -615,6 +638,18 @@ export function useWebRTCConnectionCore(
                   console.log('[ConnectionCore] ✅ 接收方PeerConnection已准备就绪');
                 }, 100);
               }
+
+              // 全局保底超时：peer-joined 后 15 秒内如果 isPeerConnected 仍为 false，自动降级
+              if (peerConnectedTimeout.current) {
+                clearTimeout(peerConnectedTimeout.current);
+              }
+              peerConnectedTimeout.current = setTimeout(() => {
+                const currentState = stateManager.getState();
+                if (!currentState.isPeerConnected && !isUserDisconnecting.current) {
+                  console.log('[ConnectionCore] ⏰ peer-joined 后 15 秒仍未建立对等连接，启动中继降级');
+                  initiateRelayFallbackRef.current();
+                }
+              }, 15000);
               break;
 
             case 'offer':
@@ -810,8 +845,8 @@ export function useWebRTCConnectionCore(
     
     // 设置主动断开标志
     isUserDisconnecting.current = true;
-    
-    // 清理连接并发送断开通知
+
+    // 清理连接并发送断开通知（cleanup 内部已会清除 fallback 回调）
     cleanup(shouldNotifyDisconnect);
     
     // 主动断开时，将状态完全重置为初始状态（没有任何错误或消息）

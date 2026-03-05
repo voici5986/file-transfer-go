@@ -121,7 +121,6 @@ export const useURLHandler = <T = 'send' | 'receive'>({
   useEffect(() => {
     // 使用 ref 确保只处理一次，避免严格模式的重复调用
     if (urlProcessedRef.current) {
-      console.log('URL已处理过，跳过重复处理');
       return;
     }
 

@@ -300,6 +300,15 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
                   connectionCode={inputCode}
                   onDisconnect={handleStopViewing}
                 />
+              ) : desktopShare.webRTCConnection?.transportMode === 'relay' ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-8">
+                  <div className="text-center">
+                    <Monitor className="w-16 h-16 mx-auto text-amber-400 mb-4" />
+                    <p className="text-amber-700 font-medium mb-2">⚠️ 当前为中继模式</p>
+                    <p className="text-sm text-amber-600">中继模式（WS 转发）不支持桌面视频流传输，桌面共享需要 P2P 直连。</p>
+                    <p className="text-sm text-amber-600 mt-1">请检查网络环境或尝试重新连接。</p>
+                  </div>
+                </div>
               ) : (
                 <div className="bg-white/80 backdrop-blur-sm rounded-xl p-8 border border-slate-200">
                   <div className="text-center">

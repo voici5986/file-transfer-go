@@ -105,11 +105,12 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
     }
   }, [desktopShare, showToast]);
 
-  // P2P连接建立后自动弹出桌面选择
+  // P2P连接建立后自动弹出桌面选择（仅 P2P 模式）
   useEffect(() => {
     if (
       desktopShare.isPeerConnected &&
       desktopShare.canStartSharing &&
+      desktopShare.transportMode !== 'relay' &&
       !desktopShare.isSharing &&
       !isLoading &&
       !hasAutoStartedRef.current
@@ -118,7 +119,7 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
       console.log('[DesktopShareSender] P2P连接已建立，自动弹出桌面选择');
       handleStartSharing();
     }
-  }, [desktopShare.isPeerConnected, desktopShare.canStartSharing, desktopShare.isSharing, isLoading, handleStartSharing]);
+  }, [desktopShare.isPeerConnected, desktopShare.canStartSharing, desktopShare.transportMode, desktopShare.isSharing, isLoading, handleStartSharing]);
 
   // 切换桌面
   const handleSwitchDesktop = useCallback(async () => {
@@ -235,6 +236,18 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
               />
             </div>
 
+            {/* 中继模式提示（在控制区域外面，确保可见） */}
+            {desktopShare.transportMode === 'relay' && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-8">
+                <div className="text-center">
+                  <Monitor className="w-16 h-16 mx-auto text-amber-400 mb-4" />
+                  <p className="text-amber-700 font-medium mb-2">⚠️ 当前为中继模式</p>
+                  <p className="text-sm text-amber-600">中继模式（WS 转发）不支持桌面视频流传输，桌面共享需要 P2P 直连。</p>
+                  <p className="text-sm text-amber-600 mt-1">请检查网络环境或尝试重新连接。</p>
+                </div>
+              </div>
+            )}
+
             {/* 桌面共享控制区域 */}
             {desktopShare.canStartSharing && (
               <div className="space-y-4">
@@ -255,7 +268,7 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                         {isLoading ? '启动中...' : '选择并开始共享桌面'}
                       </Button>
                       
-                      {!desktopShare.isPeerConnected && (
+                      {!desktopShare.isPeerConnected && desktopShare.transportMode !== 'relay' && (
                         <div className="text-center">
                           <p className="text-sm text-gray-500 mb-2">
                             等待接收方加入房间建立P2P连接...
