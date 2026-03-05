@@ -73,12 +73,19 @@ export const useFileStateManager = ({
   }, []);
 
   // 更新文件进度
-  const updateFileProgress = useCallback((fileId: string, fileName: string, progress: number) => {
+  const updateFileProgress = useCallback((fileId: string, fileName: string, progress: number, speed?: number, eta?: number) => {
     const newStatus = progress >= 100 ? 'completed' as const : 'downloading' as const;
     setFileList(prev => prev.map(item => {
       if (item.id === fileId || item.name === fileName) {
         console.log(`更新文件 ${item.name} 进度: ${item.progress} -> ${progress}`);
-        return { ...item, progress, status: newStatus };
+        return {
+          ...item,
+          progress,
+          status: newStatus,
+          // 仅在传输中且有新值时更新速度/ETA，完成时清除
+          speed: newStatus === 'completed' ? undefined : (speed !== undefined ? speed : item.speed),
+          eta: newStatus === 'completed' ? undefined : (eta !== undefined ? eta : item.eta)
+        };
       }
       return item;
     }));

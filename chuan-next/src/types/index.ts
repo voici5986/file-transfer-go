@@ -6,6 +6,8 @@ export interface FileInfo {
   type: string;
   status: 'ready' | 'downloading' | 'completed';
   progress: number;
+  speed?: number;        // 传输速度 bytes/s
+  eta?: number;          // 预估剩余时间 秒
   lastModified?: number;
 }
 

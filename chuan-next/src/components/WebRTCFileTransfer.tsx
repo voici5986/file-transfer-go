@@ -181,7 +181,7 @@ export const WebRTCFileTransfer: React.FC = () => {
           fileName: progressInfo.fileName,
           progress: progressInfo.progress
         });
-        updateFileProgress(progressInfo.fileId, progressInfo.fileName, progressInfo.progress);
+        updateFileProgress(progressInfo.fileId, progressInfo.fileName, progressInfo.progress, progressInfo.speed, progressInfo.eta);
         if (progressInfo.progress >= 100 && mode === 'send') {
           setCurrentTransferFile(null);
         }

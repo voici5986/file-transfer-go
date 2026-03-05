@@ -33,6 +33,8 @@ export interface WebRTCConnection {
 
   // 工具方法
   getChannelState: () => RTCDataChannelState;
+  getBufferedAmount: () => number;
+  waitForBufferDrain: (threshold?: number) => Promise<void>;
   isConnectedToRoom: (roomCode: string, role: 'sender' | 'receiver') => boolean;
 
   // 当前房间信息
@@ -134,6 +136,8 @@ export function useSharedWebRTCManager(): WebRTCConnection {
 
     // 工具方法
     getChannelState: dataChannelManager.getChannelState,
+    getBufferedAmount: dataChannelManager.getBufferedAmount,
+    waitForBufferDrain: dataChannelManager.waitForBufferDrain,
     isConnectedToRoom: stateManager.isConnectedToRoom,
 
     // 媒体轨道方法

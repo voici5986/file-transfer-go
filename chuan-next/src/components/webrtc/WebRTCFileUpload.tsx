@@ -23,6 +23,28 @@ const formatFileSize = (bytes: number): string => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
+const formatSpeed = (bytesPerSecond: number): string => {
+  if (bytesPerSecond <= 0) return '--';
+  const k = 1024;
+  if (bytesPerSecond < k) return `${bytesPerSecond.toFixed(0)} B/s`;
+  if (bytesPerSecond < k * k) return `${(bytesPerSecond / k).toFixed(1)} KB/s`;
+  if (bytesPerSecond < k * k * k) return `${(bytesPerSecond / (k * k)).toFixed(2)} MB/s`;
+  return `${(bytesPerSecond / (k * k * k)).toFixed(2)} GB/s`;
+};
+
+const formatETA = (seconds: number): string => {
+  if (seconds <= 0 || !isFinite(seconds)) return '--';
+  if (seconds < 60) return `${Math.ceil(seconds)}秒`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.ceil(seconds % 60);
+    return `${m}分${s > 0 ? s + '秒' : ''}`;
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.ceil((seconds % 3600) / 60);
+  return `${h}时${m > 0 ? m + '分' : ''}`;
+};
+
 interface WebRTCFileUploadProps {
   selectedFiles: File[];
   fileList?: FileInfo[]; // 添加文件列表信息（包含状态和进度）
@@ -190,6 +212,8 @@ export function WebRTCFileUpload({
             const isTransferringThisFile = fileInfo?.status === 'downloading';
             const currentProgress = fileInfo?.progress || 0;
             const fileStatus = fileInfo?.status || 'ready';
+            const currentSpeed = fileInfo?.speed;
+            const currentEta = fileInfo?.eta;
             
             return (
               <div
@@ -235,9 +259,17 @@ export function WebRTCFileUpload({
                 {(fileStatus === 'downloading' || fileStatus === 'completed') && currentProgress > 0 && (
                   <div className="px-3 sm:px-4 pb-3 sm:pb-4">
                     <div className="space-y-2">
-                      <div className="flex justify-between text-xs text-slate-600">
+                      <div className="flex justify-between items-center text-xs text-slate-600">
                         <span>{fileStatus === 'downloading' ? '正在发送...' : '发送完成'}</span>
-                        <span className="font-medium">{currentProgress.toFixed(1)}%</span>
+                        <div className="flex items-center space-x-3">
+                          {fileStatus === 'downloading' && currentSpeed != null && currentSpeed > 0 && (
+                            <span className="text-orange-600 font-medium">{formatSpeed(currentSpeed)}</span>
+                          )}
+                          {fileStatus === 'downloading' && currentEta != null && currentEta > 0 && (
+                            <span className="text-slate-500">剩余 {formatETA(currentEta)}</span>
+                          )}
+                          <span className="font-medium">{currentProgress.toFixed(1)}%</span>
+                        </div>
                       </div>
                       <div className="w-full bg-slate-200 rounded-full h-2">
                         <div 

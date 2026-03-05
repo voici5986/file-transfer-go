@@ -44,6 +44,12 @@ export interface WebRTCDataChannelManager {
   // 获取数据通道状态（兼容 RTCDataChannelState）
   getChannelState: () => RTCDataChannelState;
   
+  // 获取当前缓冲区大小
+  getBufferedAmount: () => number;
+  
+  // 等待缓冲区排空到指定阈值以下
+  waitForBufferDrain: (threshold?: number) => Promise<void>;
+  
   // 处理数据通道消息 (P2P)
   handleDataChannelMessage: (event: MessageEvent) => void;
 }
@@ -92,8 +98,7 @@ export function useWebRTCDataChannelManager(
     // 数据通道处理
     if (role === 'sender') {
       const dataChannel = pc.createDataChannel('shared-channel', {
-        ordered: true,
-        maxRetransmits: 3
+        ordered: true
       });
       dcRef.current = dataChannel;
 
@@ -471,6 +476,62 @@ export function useWebRTCDataChannelManager(
     return dcRef.current?.readyState || 'closed';
   }, []);
 
+  // 获取当前缓冲区大小
+  const getBufferedAmount = useCallback((): number => {
+    if (dcRef.current && dcRef.current.readyState === 'open') {
+      return dcRef.current.bufferedAmount;
+    }
+    if (relayWsRef.current && relayWsRef.current.readyState === WebSocket.OPEN) {
+      return relayWsRef.current.bufferedAmount;
+    }
+    return 0;
+  }, []);
+
+  // 等待缓冲区排空到阈值以下
+  const waitForBufferDrain = useCallback((threshold: number = 1 * 1024 * 1024): Promise<void> => {
+    // P2P DataChannel
+    if (dcRef.current && dcRef.current.readyState === 'open') {
+      if (dcRef.current.bufferedAmount <= threshold) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        const dc = dcRef.current!;
+        dc.bufferedAmountLowThreshold = threshold;
+        const onLow = () => {
+          dc.removeEventListener('bufferedamountlow', onLow);
+          resolve();
+        };
+        dc.addEventListener('bufferedamountlow', onLow);
+        // 安全超时，防止死等
+        setTimeout(() => {
+          dc.removeEventListener('bufferedamountlow', onLow);
+          resolve();
+        }, 5000);
+      });
+    }
+    // Relay WebSocket
+    if (relayWsRef.current && relayWsRef.current.readyState === WebSocket.OPEN) {
+      if (relayWsRef.current.bufferedAmount <= threshold) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (!relayWsRef.current || relayWsRef.current.readyState !== WebSocket.OPEN ||
+              relayWsRef.current.bufferedAmount <= threshold) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 50);
+        // 安全超时
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          resolve();
+        }, 5000);
+      });
+    }
+    return Promise.resolve();
+  }, []);
+
   return {
     createDataChannel,
     switchToRelay,
@@ -481,6 +542,8 @@ export function useWebRTCDataChannelManager(
     registerMessageHandler,
     registerDataHandler,
     getChannelState,
+    getBufferedAmount,
+    waitForBufferDrain,
     handleDataChannelMessage,
   };
 }

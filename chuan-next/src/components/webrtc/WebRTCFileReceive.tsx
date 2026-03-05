@@ -25,6 +25,28 @@ const formatFileSize = (bytes: number): string => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
+const formatSpeed = (bytesPerSecond: number): string => {
+  if (bytesPerSecond <= 0) return '--';
+  const k = 1024;
+  if (bytesPerSecond < k) return `${bytesPerSecond.toFixed(0)} B/s`;
+  if (bytesPerSecond < k * k) return `${(bytesPerSecond / k).toFixed(1)} KB/s`;
+  if (bytesPerSecond < k * k * k) return `${(bytesPerSecond / (k * k)).toFixed(2)} MB/s`;
+  return `${(bytesPerSecond / (k * k * k)).toFixed(2)} GB/s`;
+};
+
+const formatETA = (seconds: number): string => {
+  if (seconds <= 0 || !isFinite(seconds)) return '--';
+  if (seconds < 60) return `${Math.ceil(seconds)}秒`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.ceil(seconds % 60);
+    return `${m}分${s > 0 ? s + '秒' : ''}`;
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.ceil((seconds % 3600) / 60);
+  return `${h}时${m > 0 ? m + '分' : ''}`;
+};
+
 interface WebRTCFileReceiveProps {
   onJoinRoom: (code: string) => void;
   files: FileInfo[];
@@ -204,6 +226,8 @@ export function WebRTCFileReceive({
               const isCompleted = file.status === 'completed';
               const hasDownloadedFile = downloadedFiles?.has(file.id);
               const currentProgress = file.progress;
+              const currentSpeed = file.speed;
+              const currentEta = file.eta;
               
               console.log('文件状态:', {
                 fileName: file.name,
@@ -226,9 +250,6 @@ export function WebRTCFileReceive({
                         {hasDownloadedFile && (
                           <p className="text-xs text-emerald-600 font-medium">✅ 传输完成，点击保存</p>
                         )}
-                        {isDownloading && (
-                          <p className="text-xs text-blue-600 font-medium">⏳ 传输中...{currentProgress.toFixed(1)}%</p>
-                        )}
                       </div>
                     </div>
                     <Button
@@ -249,9 +270,17 @@ export function WebRTCFileReceive({
                   
                   {(isDownloading || isCompleted) && currentProgress > 0 && (
                     <div className="mt-3 space-y-2">
-                      <div className="flex justify-between text-sm text-slate-600">
+                      <div className="flex justify-between items-center text-sm text-slate-600">
                         <span>{hasDownloadedFile ? '传输完成' : '正在传输...'}</span>
-                        <span className="font-medium">{currentProgress.toFixed(1)}%</span>
+                        <div className="flex items-center space-x-3">
+                          {isDownloading && currentSpeed != null && currentSpeed > 0 && (
+                            <span className="text-xs text-blue-600 font-medium">{formatSpeed(currentSpeed)}</span>
+                          )}
+                          {isDownloading && currentEta != null && currentEta > 0 && (
+                            <span className="text-xs text-slate-500">剩余 {formatETA(currentEta)}</span>
+                          )}
+                          <span className="font-medium">{currentProgress.toFixed(1)}%</span>
+                        </div>
                       </div>
                       <div className="w-full bg-slate-200 rounded-full h-2">
                         <div 
