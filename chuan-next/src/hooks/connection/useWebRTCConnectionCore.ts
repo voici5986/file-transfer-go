@@ -103,7 +103,8 @@ export function useWebRTCConnectionCore(
     }
 
     currentRoom.current = null;
-    isUserDisconnecting.current = false;  // 重置主动断开标志
+    // 注意：不在此处重置 isUserDisconnecting，
+    // 因为 ws.onclose 是异步触发的，需要保持标志直到 onclose 处理完毕
   }, [dataChannelManager]);
 
   // ===== 连接到中继服务器（实际的 WS 连接逻辑） =====
@@ -429,18 +430,24 @@ export function useWebRTCConnectionCore(
           }
           break;
         case 'failed':
-          console.error('[ConnectionCore] ❌ WebRTC连接失败，启动中继降级');
-          stateManager.updateState({ isPeerConnected: false });
-          // P2P 连接失败，自动降级到中继
-          initiateRelayFallback();
+          console.error('[ConnectionCore] ❌ WebRTC连接失败');
+          if (!isUserDisconnecting.current) {
+            console.log('[ConnectionCore] 启动中继降级');
+            stateManager.updateState({ isPeerConnected: false });
+            initiateRelayFallback();
+          }
           break;
         case 'disconnected':
           console.log('[ConnectionCore] 🔌 WebRTC连接已断开');
-          stateManager.updateState({ isPeerConnected: false });
+          if (!isUserDisconnecting.current) {
+            stateManager.updateState({ isPeerConnected: false });
+          }
           break;
         case 'closed':
           console.log('[ConnectionCore] 🚫 WebRTC连接已关闭');
-          stateManager.updateState({ isPeerConnected: false });
+          if (!isUserDisconnecting.current) {
+            stateManager.updateState({ isPeerConnected: false });
+          }
           break;
       }
     };
@@ -703,18 +710,24 @@ export function useWebRTCConnectionCore(
 
             case 'disconnection':
               console.log('[ConnectionCore] 🔌 对方主动断开连接');
+              // 标记为主动断开，避免后续WS关闭和PC状态变化显示异常错误
+              isUserDisconnecting.current = true;
               // 对方断开连接的处理
               stateManager.updateState({
                 isPeerConnected: false,
-                isConnected: false,  // 添加这个状态
-                error: '对方已离开房间',
-                canRetry: true
+                isConnected: false,
+                error: '对方已退出共享',
+                canRetry: false
               });
-              // 清理P2P连接但保持WebSocket连接，允许重新连接
+              // 清理P2P连接
               if (pcRef.current) {
                 pcRef.current.close();
                 pcRef.current = null;
               }
+              // 延迟重置标志
+              setTimeout(() => {
+                isUserDisconnecting.current = false;
+              }, 2000);
               break;
 
             default:
@@ -735,15 +748,15 @@ export function useWebRTCConnectionCore(
         console.log('[ConnectionCore] 🔌 WebSocket 连接已关闭, 代码:', event.code, '原因:', event.reason);
         stateManager.updateState({ isWebSocketConnected: false });
         
-        // 检查是否是用户主动断开
+        // 检查是否是主动断开（自己或对方断开触发）
         if (isUserDisconnecting.current) {
-          console.log('[ConnectionCore] ✅ 用户主动断开，正常关闭');
-          // 用户主动断开时不显示错误消息
+          console.log('[ConnectionCore] ✅ 主动断开流程，正常关闭');
+          isUserDisconnecting.current = false;
           return;
         }
         
-        // 只有在非正常关闭且不是用户主动断开时才显示错误
-        if (event.code !== 1000 && event.code !== 1001) { // 非正常关闭
+        // 只有在非正常关闭且不是主动断开时才显示错误
+        if (event.code !== 1000 && event.code !== 1001) {
           stateManager.updateState({ error: `WebSocket异常关闭 (${event.code}): ${event.reason || '连接意外断开'}`, isConnecting: false, canRetry: true });
         }
       };
@@ -770,6 +783,12 @@ export function useWebRTCConnectionCore(
     
     // 主动断开时，将状态完全重置为初始状态（没有任何错误或消息）
     stateManager.resetToInitial();
+    
+    // 延迟重置标志，确保异步的 onclose 回调能读到它
+    setTimeout(() => {
+      isUserDisconnecting.current = false;
+    }, 1000);
+    
     console.log('[ConnectionCore] ✅ 连接已断开并清理完成');
   }, [cleanup, stateManager]);
 

@@ -8,6 +8,8 @@ import { useToast } from '@/components/ui/toast-simple';
 import { useDesktopShareBusiness } from '@/hooks/desktop-share';
 import DesktopViewer from '@/components/DesktopViewer';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import VoiceChatPanel from '@/components/VoiceChatPanel';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { validateRoomCode, checkRoomStatus, handleNetworkError } from '@/lib/room-utils';
 
 interface WebRTCDesktopReceiverProps {
@@ -20,6 +22,7 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
   const [inputCode, setInputCode] = useState(initialCode || '');
   const [isLoading, setIsLoading] = useState(false);
   const [isJoiningRoom, setIsJoiningRoom] = useState(false); // 添加加入房间状态
+  const [showPeerLeftDialog, setShowPeerLeftDialog] = useState(false); // 发送方退出提示
   const hasTriedAutoJoin = React.useRef(false); // 添加 ref 来跟踪是否已尝试自动加入
   const { showToast } = useToast();
 
@@ -92,6 +95,26 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
       setIsLoading(false);
     }
   }, [desktopShare, showToast]);
+
+  // 监听发送方退出：当正在观看时检测到错误为"对方已退出共享"
+  useEffect(() => {
+    if (desktopShare.isViewing && desktopShare.webRTCError === '对方已退出共享') {
+      console.log('[DesktopShareReceiver] 检测到发送方已退出共享');
+      setShowPeerLeftDialog(true);
+    }
+  }, [desktopShare.isViewing, desktopShare.webRTCError]);
+
+  // 确认发送方退出后回到初始页面
+  const handlePeerLeftConfirm = useCallback(async () => {
+    setShowPeerLeftDialog(false);
+    try {
+      await desktopShare.stopViewing();
+    } catch {
+      // ignore
+    }
+    setInputCode('');
+    hasTriedAutoJoin.current = false;
+  }, [desktopShare]);
 
   // 如果有初始代码且还未加入观看，自动尝试加入
   React.useEffect(() => {
@@ -261,6 +284,14 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
                 </div>
               </div>
 
+              {/* 语音通话面板 */}
+              {desktopShare.webRTCConnection && (
+                <VoiceChatPanel
+                  connection={desktopShare.webRTCConnection}
+                  isPeerConnected={desktopShare.isPeerConnected}
+                />
+              )}
+
               {/* 桌面显示区域 */}
               {desktopShare.remoteStream ? (
                 <DesktopViewer
@@ -287,6 +318,18 @@ export default function WebRTCDesktopReceiver({ className, initialCode, onConnec
           )}
         </div>
       </div>
+
+      {/* 发送方退出提示对话框 */}
+      <ConfirmDialog
+        isOpen={showPeerLeftDialog}
+        onClose={handlePeerLeftConfirm}
+        onConfirm={handlePeerLeftConfirm}
+        title="共享已结束"
+        message="对方已停止桌面共享，点击确认返回。"
+        confirmText="确认"
+        cancelText="确认"
+        type="info"
+      />
     </div>
   );
 }

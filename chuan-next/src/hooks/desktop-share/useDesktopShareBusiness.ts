@@ -6,6 +6,7 @@ interface DesktopShareState {
   isViewing: boolean;
   connectionCode: string;
   remoteStream: MediaStream | null;
+  localStream: MediaStream | null;
   error: string | null;
   isWaitingForPeer: boolean;  // 新增：是否等待对方连接
 }
@@ -17,6 +18,7 @@ export function useDesktopShareBusiness() {
     isViewing: false,
     connectionCode: '',
     remoteStream: null,
+    localStream: null,
     error: null,
     isWaitingForPeer: false,
   });
@@ -299,6 +301,7 @@ export function useDesktopShareBusiness() {
       updateState({
         isSharing: true,
         isWaitingForPeer: false,
+        localStream: stream,
       });
 
       console.log('[DesktopShare] 🎉 桌面共享已开始');
@@ -346,6 +349,8 @@ export function useDesktopShareBusiness() {
       await setupVideoSending(newStream);
       console.log('[DesktopShare] ✅ 桌面切换完成');
 
+      updateState({ localStream: newStream });
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '切换桌面失败';
       console.error('[DesktopShare] ❌ 切换桌面失败:', error);
@@ -380,6 +385,7 @@ export function useDesktopShareBusiness() {
       updateState({
         isSharing: false,
         connectionCode: '',
+        localStream: null,
         error: null,
         isWaitingForPeer: false,
       });
@@ -415,6 +421,7 @@ export function useDesktopShareBusiness() {
       // 保留WebSocket连接和房间代码，但重置共享状态
       updateState({
         isSharing: false,
+        localStream: null,
         error: null,
         isWaitingForPeer: false,
       });
@@ -515,6 +522,7 @@ export function useDesktopShareBusiness() {
     isViewing: state.isViewing,
     connectionCode: state.connectionCode,
     remoteStream: state.remoteStream,
+    localStream: state.localStream,
     error: state.error,
     isWaitingForPeer: state.isWaitingForPeer,
     isConnected: webRTC.isConnected,

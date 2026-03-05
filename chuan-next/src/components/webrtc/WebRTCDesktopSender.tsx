@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Share, Monitor,  Play, Square, Repeat } from 'lucide-react';
+import { Share, Monitor, Play, Square, Repeat } from 'lucide-react';
 import { useToast } from '@/components/ui/toast-simple';
 import { useDesktopShareBusiness } from '@/hooks/desktop-share';
 import RoomInfoDisplay from '@/components/RoomInfoDisplay';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import VoiceChatPanel from '@/components/VoiceChatPanel';
 
 interface WebRTCDesktopSenderProps {
   className?: string;
@@ -16,6 +17,7 @@ interface WebRTCDesktopSenderProps {
 export default function WebRTCDesktopSender({ className, onConnectionChange }: WebRTCDesktopSenderProps) {
   const [isLoading, setIsLoading] = useState(false);
   const { showToast } = useToast();
+  const hasAutoStartedRef = useRef(false);
 
   // 使用桌面共享业务逻辑
   const desktopShare = useDesktopShareBusiness();
@@ -102,6 +104,21 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
       setIsLoading(false);
     }
   }, [desktopShare, showToast]);
+
+  // P2P连接建立后自动弹出桌面选择
+  useEffect(() => {
+    if (
+      desktopShare.isPeerConnected &&
+      desktopShare.canStartSharing &&
+      !desktopShare.isSharing &&
+      !isLoading &&
+      !hasAutoStartedRef.current
+    ) {
+      hasAutoStartedRef.current = true;
+      console.log('[DesktopShareSender] P2P连接已建立，自动弹出桌面选择');
+      handleStartSharing();
+    }
+  }, [desktopShare.isPeerConnected, desktopShare.canStartSharing, desktopShare.isSharing, isLoading, handleStartSharing]);
 
   // 切换桌面
   const handleSwitchDesktop = useCallback(async () => {
@@ -220,22 +237,10 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
 
             {/* 桌面共享控制区域 */}
             {desktopShare.canStartSharing && (
-              <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 border border-slate-200 mb-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-lg font-medium text-slate-800 flex items-center">
-                    <Monitor className="w-5 h-5 mr-2" />
-                    桌面共享控制
-                  </h4>
-                  {desktopShare.isSharing && (
-                    <div className="flex items-center space-x-1 bg-emerald-100 text-emerald-700 px-2 py-1 rounded-md">
-                      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                      <span className="font-medium">共享中</span>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="space-y-4">
-                  {!desktopShare.isSharing ? (
+              <div className="space-y-4">
+                {!desktopShare.isSharing ? (
+                  // 未共享：显示开始按钮
+                  <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 border border-slate-200">
                     <div className="space-y-3">
                       <Button
                         onClick={handleStartSharing}
@@ -262,35 +267,52 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
                         </div>
                       )}
                     </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-center space-x-2 text-green-600 mb-4">
-                        <Play className="w-5 h-5" />
-                        <span className="font-semibold">桌面共享进行中</span>
-                      </div>
-                      <div className="flex justify-center space-x-3">
-                        <Button
-                          onClick={handleSwitchDesktop}
-                          disabled={isLoading}
-                          variant="outline"
-                          size="sm"
-                        >
-                          <Repeat className="w-4 h-4 mr-2" />
-                          {isLoading ? '切换中...' : '切换桌面'}
-                        </Button>
-                        <Button
-                          onClick={handleStopSharing}
-                          disabled={isLoading}
-                          variant="destructive"
-                          size="sm"
-                        >
-                          <Square className="w-4 h-4 mr-2" />
-                          {isLoading ? '停止中...' : '停止共享'}
-                        </Button>
+                  </div>
+                ) : (
+                  // 共享中：显示桌面预览 + 叠加控制栏
+                  <div className="relative bg-black rounded-xl overflow-hidden">
+                    {/* 本地桌面预览 */}
+                    <SenderDesktopPreview stream={desktopShare.localStream} />
+
+                    {/* 叠加控制栏 */}
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 sm:p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2 text-white">
+                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                          <span className="text-sm font-medium">桌面共享中</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Button
+                            onClick={handleSwitchDesktop}
+                            disabled={isLoading}
+                            size="sm"
+                            className="bg-white/20 text-white hover:bg-white/30 border border-white/30 rounded-lg px-3 py-1.5"
+                          >
+                            <Repeat className="w-4 h-4 mr-1.5" />
+                            <span className="text-sm">{isLoading ? '切换中...' : '切换桌面'}</span>
+                          </Button>
+                          <Button
+                            onClick={handleStopSharing}
+                            disabled={isLoading}
+                            size="sm"
+                            className="bg-red-500/80 text-white hover:bg-red-600 border border-red-400/50 rounded-lg px-3 py-1.5"
+                          >
+                            <Square className="w-4 h-4 mr-1.5" />
+                            <span className="text-sm">{isLoading ? '停止中...' : '停止共享'}</span>
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
+
+                {/* 语音发言面板 */}
+                {desktopShare.webRTCConnection && (
+                  <VoiceChatPanel
+                    connection={desktopShare.webRTCConnection}
+                    isPeerConnected={desktopShare.isPeerConnected}
+                  />
+                )}
               </div>
             )}
 
@@ -321,5 +343,40 @@ export default function WebRTCDesktopSender({ className, onConnectionChange }: W
       </div>
 
     </div>
+  );
+}
+
+// 发送方桌面预览子组件
+function SenderDesktopPreview({ stream }: { stream: MediaStream | null }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => {
+        // 自动播放被阻止时静默处理
+      });
+    } else if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, [stream]);
+
+  if (!stream) {
+    return (
+      <div className="flex items-center justify-center h-52 text-white/60">
+        <Monitor className="w-10 h-10" />
+      </div>
+    );
+  }
+
+  return (
+    <video
+      ref={videoRef}
+      autoPlay
+      playsInline
+      muted
+      className="w-full object-contain"
+      style={{ aspectRatio: '16/9', minHeight: '240px', maxHeight: '480px' }}
+    />
   );
 }
