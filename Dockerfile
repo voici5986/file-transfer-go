@@ -1,5 +1,5 @@
 # ==============================================
-# AMD64 Dockerfile - 基于 build-fullstack.sh 流程
+# Multi-Arch Dockerfile - 基于 build-fullstack.sh 流程
 # ==============================================
 
 # 前端构建阶段
@@ -35,8 +35,11 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 ENV GOPROXY=https://proxy.golang.org,direct
 ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=amd64
+
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOOS=${TARGETOS}
+ENV GOARCH=${TARGETARCH}
 
 WORKDIR /app
 
@@ -50,7 +53,7 @@ RUN go mod download
 # 拷贝前端构建结果
 COPY --from=frontend-builder /app/chuan-next/out ./internal/web/frontend/
 
-# 构建 Go 应用 - AMD64 架构（模拟 build-fullstack.sh 的 build_backend 函数）
+# 构建 Go 应用 - 按目标架构编译（模拟 build-fullstack.sh 的 build_backend 函数）
 RUN go build -ldflags='-s -w -extldflags '-static'' -o server ./cmd
 
 # ==============================================
