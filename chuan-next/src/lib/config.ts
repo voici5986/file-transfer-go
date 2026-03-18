@@ -26,7 +26,6 @@ const getCurrentBaseUrl = () => {
 
 // 动态获取 WebSocket URL - 总是在客户端运行时计算
 const getCurrentWsUrl = () => {
-    return `ws://${window.location.hostname}:8080`;
   if (typeof window !== 'undefined') {
     // 检查是否是 Next.js 开发服务器（端口 3000 或 3001）
     const isNextDevServer = window.location.hostname === 'localhost' && 
@@ -34,7 +33,7 @@ const getCurrentWsUrl = () => {
     
     if (isNextDevServer) {
       // 开发模式：通过 Next.js 开发服务器访问，连接到后端 WebSocket
-      return 'ws://localhost:8080';
+      return `ws://${window.location.hostname}:8080`;
     }
     
     // 生产模式或通过 Go 服务器访问：使用当前域名和端口
